@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m kev_collector.cli "$@"

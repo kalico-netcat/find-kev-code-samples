@@ -1,0 +1,42 @@
+{
+  "catalogVersion": "2026.04.26",
+  "dateReleased": "2026-04-26T00:00:00Z",
+  "vulnerabilities": [
+    {
+      "cveID": "CVE-2020-11023",
+      "vendorProject": "JQuery",
+      "product": "JQuery",
+      "vulnerabilityName": "JQuery Cross-Site Scripting (XSS) Vulnerability",
+      "shortDescription": "JQuery contains a cross-site scripting vulnerability.",
+      "requiredAction": "Apply updates per vendor instructions.",
+      "dateAdded": "2022-08-25",
+      "dueDate": "2022-09-15",
+      "knownRansomwareCampaignUse": "Unknown",
+      "cwes": ["CWE-79"]
+    },
+    {
+      "cveID": "CVE-2025-48384",
+      "vendorProject": "Git",
+      "product": "Git",
+      "vulnerabilityName": "Git Link Following Vulnerability",
+      "shortDescription": "Git contains a link following vulnerability.",
+      "requiredAction": "Apply updates per vendor instructions.",
+      "dateAdded": "2025-08-25",
+      "dueDate": "2025-09-15",
+      "knownRansomwareCampaignUse": "Unknown",
+      "cwes": ["CWE-59", "CWE-436"]
+    },
+    {
+      "cveID": "CVE-2023-0001",
+      "vendorProject": "Example Proprietary Vendor",
+      "product": "Closed Appliance",
+      "vulnerabilityName": "Closed Appliance Command Injection Vulnerability",
+      "shortDescription": "A proprietary appliance contains command injection.",
+      "requiredAction": "Apply updates per vendor instructions.",
+      "dateAdded": "2023-01-01",
+      "dueDate": "2023-01-21",
+      "knownRansomwareCampaignUse": "Unknown",
+      "cwes": "CWE-78"
+    }
+  ]
+}
