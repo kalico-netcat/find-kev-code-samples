@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
-FINDING_REQUIRED_FIELDS = {"cve_id", "source_urls"}
+FINDING_REQUIRED_FIELDS = {"cve_id", "source_urls", "evidence_level"}
+
+EVIDENCE_LEVELS = {
+    "official_patch",
+    "official_advisory",
+    "upstream_release",
+    "third_party_analysis",
+    "weak_lead",
+    "no_public_code",
+}
 
 
 def normalize_finding(record: dict[str, Any]) -> dict[str, Any]:
@@ -21,6 +30,9 @@ def normalize_finding(record: dict[str, Any]) -> dict[str, Any]:
         "patch_refs": normalize_string_list(record.get("patch_refs") or record.get("patchRefs")),
         "affected_files": normalize_string_list(record.get("affected_files") or record.get("affectedFiles")),
         "license": str(record.get("license") or "").strip(),
+        "evidence_level": normalize_evidence_level(
+            record.get("evidence_level") or record.get("evidenceLevel")
+        ),
         "confidence": normalize_confidence(record.get("confidence")),
         "notes": str(record.get("notes") or "").strip(),
     }
@@ -52,6 +64,16 @@ def normalize_string_list(value: Any) -> list[str]:
     else:
         values = [str(value)]
     return sorted({item.strip() for item in values if item.strip()})
+
+
+def normalize_evidence_level(value: Any) -> str:
+    evidence_level = str(value or "").strip().lower()
+    if not evidence_level:
+        raise ValueError("finding missing evidence_level")
+    if evidence_level not in EVIDENCE_LEVELS:
+        allowed = ", ".join(sorted(EVIDENCE_LEVELS))
+        raise ValueError(f"invalid evidence_level {evidence_level!r}; expected one of: {allowed}")
+    return evidence_level
 
 
 def normalize_confidence(value: Any) -> float:

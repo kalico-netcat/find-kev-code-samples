@@ -8,6 +8,7 @@ from .batches import write_batches
 from .findings import merge_findings
 from .io import read_json, read_jsonl, write_jsonl
 from .kev import DEFAULT_KEV_URL, fetch_kev_json, normalize_kev_feed
+from .prompts import render_batch_prompt
 from .rank import rank_records
 from .samples import create_sample
 from .validate import validate_workspace
@@ -50,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("input", type=Path, help="JSONL findings to ingest")
     ingest.add_argument("--output", type=Path, default=Path("data/findings.jsonl"))
     ingest.set_defaults(func=cmd_ingest)
+
+    prompt_batch = subparsers.add_parser("prompt-batch", help="render a ready-to-send worker prompt for a batch")
+    prompt_batch.add_argument("input", type=Path, help="batch JSONL file")
+    prompt_batch.add_argument("--output", type=Path, help="write prompt to this Markdown file")
+    prompt_batch.set_defaults(func=cmd_prompt_batch)
 
     new_sample = subparsers.add_parser("new-sample", help="scaffold a triage-ready sample directory")
     new_sample.add_argument("cve_id")
@@ -109,6 +115,21 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     merged = merge_findings(existing, incoming)
     count = write_jsonl(output, merged)
     print(f"wrote {count} finding(s) to {output}")
+    return 0
+
+
+def cmd_prompt_batch(args: argparse.Namespace) -> int:
+    root = args.root
+    input_path = resolve(root, args.input)
+    records = read_jsonl(input_path)
+    prompt = render_batch_prompt(input_path, records)
+    if args.output:
+        output = resolve(root, args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(prompt, encoding="utf-8")
+        print(f"wrote prompt to {output}")
+    else:
+        print(prompt, end="")
     return 0
 
 

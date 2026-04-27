@@ -1,0 +1,2 @@
+{"cve_id":"CVE-2020-11023","product":"JQuery","score":75,"score_reasons":["open-source ecosystem hint: jquery","code-review-friendly CWE: CWE-79"],"vendor_project":"JQuery","vulnerability_name":"JQuery Cross-Site Scripting (XSS) Vulnerability"}
+{"cve_id":"CVE-2025-48384","product":"Git","score":65,"score_reasons":["open-source ecosystem hint: git","code-review-friendly CWE: CWE-59"],"vendor_project":"Git","vulnerability_name":"Git Link Following Vulnerability"}

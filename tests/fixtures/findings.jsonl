@@ -1,1 +1,1 @@
-{"affected_files":["src/jquery.js"],"confidence":0.8,"cve_id":"CVE-2020-11023","license":"MIT","notes":"Fixture finding for CLI ingest smoke test.","patch_refs":["abc123"],"repo_urls":["https://github.com/jquery/jquery"],"source_urls":["https://example.test/advisory"]}
+{"affected_files":["src/jquery.js"],"confidence":0.9,"cve_id":"CVE-2020-11023","evidence_level":"official_patch","license":"MIT","notes":"Fixture finding for CLI ingest smoke test.","patch_refs":["abc123"],"repo_urls":["https://github.com/jquery/jquery"],"source_urls":["https://example.test/advisory"]}
