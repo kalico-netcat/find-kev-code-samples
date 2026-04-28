@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import json
 import re
-import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from .findings import normalize_finding
+from .git_source import GitBundleResult, prepare_git_source_bundle
 from .io import read_json, read_jsonl, write_json
 from .samples import normalize_extension
 
@@ -82,6 +82,7 @@ def prepare_sample_candidates(
     level: str = "official_patch",
     min_confidence: float = 0.85,
     force: bool = False,
+    fetch_code: bool = True,
 ) -> list[dict[str, str]]:
     if force:
         candidates = [
@@ -110,10 +111,16 @@ def prepare_sample_candidates(
     for candidate in candidates:
         bundle_dir = root / "work" / candidate["cve_id"] / candidate["sample_id"]
         prompt_path = root / "prompts" / "snippets" / f"{candidate['cve_id']}-{candidate['sample_id']}.md"
-        write_patch_bundle(bundle_dir, candidate, force=force)
+        bundle_result = write_patch_bundle(
+            bundle_dir,
+            candidate,
+            root=root,
+            force=force,
+            fetch_code=fetch_code,
+        )
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
         if force or not prompt_path.exists():
-            prompt_path.write_text(render_snippet_prompt(candidate, bundle_dir), encoding="utf-8")
+            prompt_path.write_text(render_snippet_prompt(candidate, bundle_dir, bundle_result), encoding="utf-8")
         prepared.append(
             {
                 "cve_id": candidate["cve_id"],
@@ -121,6 +128,7 @@ def prepare_sample_candidates(
                 "sample_key": candidate["sample_key"],
                 "bundle_dir": str(bundle_dir),
                 "prompt_path": str(prompt_path),
+                "fetch_status": bundle_result.fetch_status,
             }
         )
     return prepared
@@ -209,21 +217,40 @@ def list_sample_reviews(root: Path, status: str = "needs_review") -> list[dict[s
     return records
 
 
-def write_patch_bundle(bundle_dir: Path, candidate: dict[str, Any], force: bool = False) -> None:
+def write_patch_bundle(
+    bundle_dir: Path,
+    candidate: dict[str, Any],
+    root: Path,
+    force: bool = False,
+    fetch_code: bool = True,
+) -> GitBundleResult:
     bundle_dir.mkdir(parents=True, exist_ok=True)
     metadata_path = bundle_dir / "metadata.json"
     if metadata_path.exists() and not force:
-        return
-    write_json(metadata_path, patch_bundle_metadata(candidate))
-    write_json(bundle_dir / "finding.json", candidate["finding"])
+        metadata = read_json(metadata_path)
+        return bundle_result_from_metadata(metadata, bundle_dir)
     (bundle_dir / "patch.diff").write_text("", encoding="utf-8")
     (bundle_dir / "candidate_hunks.jsonl").write_text("", encoding="utf-8")
     (bundle_dir / "vulnerable").mkdir(exist_ok=True)
     (bundle_dir / "fixed").mkdir(exist_ok=True)
 
+    if fetch_code:
+        bundle_result = prepare_git_source_bundle(
+            candidate,
+            bundle_dir,
+            root / ".cache" / "repos",
+            repo_slug_from_url(candidate["repo_url"]),
+        )
+    else:
+        bundle_result = empty_bundle_result(bundle_dir, "skipped")
 
-def patch_bundle_metadata(candidate: dict[str, Any]) -> dict[str, Any]:
-    return {
+    write_json(metadata_path, patch_bundle_metadata(candidate, bundle_result))
+    write_json(bundle_dir / "finding.json", candidate["finding"])
+    return bundle_result
+
+
+def patch_bundle_metadata(candidate: dict[str, Any], bundle_result: GitBundleResult) -> dict[str, Any]:
+    metadata = {
         "cve_id": candidate["cve_id"],
         "sample_id": candidate["sample_id"],
         "sample_key": candidate["sample_key"],
@@ -233,6 +260,34 @@ def patch_bundle_metadata(candidate: dict[str, Any]) -> dict[str, Any]:
         "file_path": candidate["file_path"],
         "status": "prepared",
     }
+    metadata.update(bundle_result.metadata())
+    return metadata
+
+
+def empty_bundle_result(bundle_dir: Path, status: str, errors: list[str] | None = None) -> GitBundleResult:
+    return GitBundleResult(
+        fetch_status=status,
+        git_commit="",
+        git_parent="",
+        vulnerable_path="",
+        fixed_path="",
+        patch_path=str(bundle_dir / "patch.diff"),
+        candidate_hunks_path=str(bundle_dir / "candidate_hunks.jsonl"),
+        fetch_errors=errors or [],
+    )
+
+
+def bundle_result_from_metadata(metadata: dict[str, Any], bundle_dir: Path) -> GitBundleResult:
+    return GitBundleResult(
+        fetch_status=str(metadata.get("fetch_status") or "skipped"),
+        git_commit=str(metadata.get("git_commit") or ""),
+        git_parent=str(metadata.get("git_parent") or ""),
+        vulnerable_path=str(metadata.get("vulnerable_path") or ""),
+        fixed_path=str(metadata.get("fixed_path") or ""),
+        patch_path=str(metadata.get("patch_path") or bundle_dir / "patch.diff"),
+        candidate_hunks_path=str(metadata.get("candidate_hunks_path") or bundle_dir / "candidate_hunks.jsonl"),
+        fetch_errors=[str(error) for error in metadata.get("fetch_errors", [])],
+    )
 
 
 def build_sample_candidate(finding: dict[str, Any]) -> dict[str, Any]:
@@ -283,7 +338,10 @@ def normalize_repo_url(value: str) -> str:
         return "unknown-repo"
     if value.endswith(".git"):
         value = value[:-4]
-    return value.rstrip("/").lower()
+    parsed = urlparse(value)
+    if parsed.scheme and parsed.netloc:
+        return value.rstrip("/").lower()
+    return value.rstrip("/")
 
 
 def normalize_patch_ref(value: str) -> str:
@@ -368,7 +426,11 @@ def scan_snippet_keys(root: Path) -> set[str]:
     return keys
 
 
-def render_snippet_prompt(candidate: dict[str, Any], bundle_dir: Path) -> str:
+def render_snippet_prompt(
+    candidate: dict[str, Any],
+    bundle_dir: Path,
+    bundle_result: GitBundleResult | None = None,
+) -> str:
     schema = {
         "cve_id": candidate["cve_id"],
         "sample_id": candidate["sample_id"],
@@ -386,6 +448,8 @@ def render_snippet_prompt(candidate: dict[str, Any], bundle_dir: Path) -> str:
     }
     finding_json = json.dumps(candidate["finding"], indent=2, sort_keys=True)
     schema_json = json.dumps(schema, indent=2, sort_keys=True)
+    bundle_result = bundle_result or empty_bundle_result(bundle_dir, "skipped")
+    bundle_json = json.dumps(bundle_result.metadata(), indent=2, sort_keys=True)
     return f"""# Snippet Selection Task
 
 You are a snippet-selection worker for the KEV code sample collector.
@@ -393,6 +457,14 @@ You are a snippet-selection worker for the KEV code sample collector.
 Use the prepared patch bundle at `{bundle_dir}`. Choose the smallest vulnerable/fixed code snippets that are still understandable for human secure-code review.
 
 Return JSON only. Do not write files.
+
+## Prepared Source Context
+
+```json
+{bundle_json}
+```
+
+Use `vulnerable_path`, `fixed_path`, `patch_path`, and `candidate_hunks_path` when `fetch_status` is `fetched`. If `fetch_status` is `partial` or `skipped`, use `fetch_errors`, source URLs, and patch refs to decide whether you can still return useful snippet JSON with clear uncertainty.
 
 ## Required Snippet JSON Shape
 
@@ -405,7 +477,7 @@ Return JSON only. Do not write files.
 - Prefer the file path already identified by the finding when it contains the vulnerable logic.
 - Include enough surrounding context for a reviewer to understand why the vulnerable code is risky.
 - Do not include unrelated refactors, test-only changes, or broad whole-file excerpts unless unavoidable.
-- If the bundle does not yet contain fetched code, use the source URLs and patch refs to return the best direct vulnerable_code/fixed_code JSON you can, and include uncertainty.
+- Use the prepared vulnerable/fixed files as the source of truth when available.
 
 ## Finding
 

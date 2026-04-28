@@ -2,6 +2,7 @@ from pathlib import Path
 import contextlib
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 
@@ -95,7 +96,7 @@ class SamplePipelineTests(unittest.TestCase):
             root = Path(directory)
             write_jsonl(root / "data/findings.jsonl", [fixture_finding()])
 
-            prepared = prepare_sample_candidates(root)
+            prepared = prepare_sample_candidates(root, fetch_code=False)
 
             self.assertEqual(len(prepared), 1)
             bundle_dir = Path(prepared[0]["bundle_dir"])
@@ -103,6 +104,81 @@ class SamplePipelineTests(unittest.TestCase):
             self.assertTrue((bundle_dir / "metadata.json").exists())
             self.assertTrue((bundle_dir / "finding.json").exists())
             self.assertTrue(prompt_path.exists())
+            metadata = json.loads((bundle_dir / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["fetch_status"], "skipped")
+
+    def test_prepare_fetches_git_bundle_for_commit_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo, commit = create_git_repo(root)
+            finding = fixture_finding()
+            finding["repo_urls"] = [str(repo)]
+            finding["patch_refs"] = [commit]
+            finding["source_urls"] = [f"{repo}/commit/{commit}"]
+            finding["affected_files"] = ["src/app.js"]
+            write_jsonl(root / "data/findings.jsonl", [finding])
+
+            prepared = prepare_sample_candidates(root)
+
+            self.assertEqual(len(prepared), 1)
+            self.assertEqual(prepared[0]["fetch_status"], "fetched")
+            bundle_dir = Path(prepared[0]["bundle_dir"])
+            metadata = json.loads((bundle_dir / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["fetch_status"], "fetched")
+            self.assertTrue(metadata["git_commit"])
+            self.assertTrue(metadata["git_parent"])
+            self.assertEqual((bundle_dir / "vulnerable/src/app.js").read_text(encoding="utf-8"), "const mode = 'unsafe';\n")
+            self.assertEqual((bundle_dir / "fixed/src/app.js").read_text(encoding="utf-8"), "const mode = 'safe';\n")
+            diff = (bundle_dir / "patch.diff").read_text(encoding="utf-8")
+            self.assertIn("-const mode = 'unsafe';", diff)
+            self.assertIn("+const mode = 'safe';", diff)
+            hunks = [json.loads(line) for line in (bundle_dir / "candidate_hunks.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(hunks[0]["file_path"], "src/app.js")
+            self.assertGreaterEqual(hunks[0]["removed_lines"], 1)
+            self.assertGreaterEqual(hunks[0]["added_lines"], 1)
+            prompt = Path(prepared[0]["prompt_path"]).read_text(encoding="utf-8")
+            self.assertIn("Prepared Source Context", prompt)
+            self.assertIn("vulnerable_path", prompt)
+
+    def test_prepare_records_fetch_errors_and_keeps_partial_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo, _commit = create_git_repo(root)
+            finding = fixture_finding()
+            finding["repo_urls"] = [str(repo)]
+            finding["patch_refs"] = ["deadbee"]
+            finding["source_urls"] = [f"{repo}/commit/deadbee"]
+            finding["affected_files"] = ["src/app.js"]
+            write_jsonl(root / "data/findings.jsonl", [finding])
+
+            prepared = prepare_sample_candidates(root)
+
+            self.assertEqual(len(prepared), 1)
+            self.assertEqual(prepared[0]["fetch_status"], "partial")
+            bundle_dir = Path(prepared[0]["bundle_dir"])
+            metadata = json.loads((bundle_dir / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["fetch_status"], "partial")
+            self.assertTrue(metadata["fetch_errors"])
+            self.assertTrue((bundle_dir / "patch.diff").exists())
+            self.assertTrue(Path(prepared[0]["prompt_path"]).exists())
+
+    def test_prepare_no_fetch_code_creates_prompt_only_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo, commit = create_git_repo(root)
+            finding = fixture_finding()
+            finding["repo_urls"] = [str(repo)]
+            finding["patch_refs"] = [commit]
+            finding["source_urls"] = [f"{repo}/commit/{commit}"]
+            finding["affected_files"] = ["src/app.js"]
+            write_jsonl(root / "data/findings.jsonl", [finding])
+
+            prepared = prepare_sample_candidates(root, fetch_code=False)
+
+            bundle_dir = Path(prepared[0]["bundle_dir"])
+            metadata = json.loads((bundle_dir / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["fetch_status"], "skipped")
+            self.assertFalse((bundle_dir / "vulnerable/src/app.js").exists())
 
     def test_import_refuses_duplicate_sample_key_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -215,6 +291,34 @@ def snippet_for(candidate: dict) -> dict:
         "evidence_level": finding["evidence_level"],
         "confidence": finding["confidence"],
     }
+
+
+def create_git_repo(root: Path) -> tuple[Path, str]:
+    repo = root / "source-repo"
+    repo.mkdir()
+    git_command(repo, "init")
+    git_command(repo, "config", "user.email", "test@example.invalid")
+    git_command(repo, "config", "user.name", "Test User")
+    source_file = repo / "src/app.js"
+    source_file.parent.mkdir()
+    source_file.write_text("const mode = 'unsafe';\n", encoding="utf-8")
+    git_command(repo, "add", "src/app.js")
+    git_command(repo, "commit", "-m", "initial vulnerable version")
+    source_file.write_text("const mode = 'safe';\n", encoding="utf-8")
+    git_command(repo, "add", "src/app.js")
+    git_command(repo, "commit", "-m", "fix vulnerability")
+    commit = git_command(repo, "rev-parse", "HEAD").stdout.decode("utf-8").strip()
+    return repo, commit
+
+
+def git_command(cwd: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
 
 
 def write_sample_metadata(

@@ -56,7 +56,9 @@ bin/kev-collector samples prepare --limit 5 --level official_patch --min-confide
 
 The candidate and prepare commands are duplicate-safe. They skip work that already has a matching `sample_key` in `samples/`, `work/`, or `agent-output/snippets/` before any repo-fetch or agent work should happen.
 
-`samples prepare` writes patch bundle metadata under `work/` and snippet prompts under `prompts/snippets/`. Spawn one snippet worker per prompt. Workers return direct snippet JSON with `vulnerable_code` and `fixed_code`, not canonical sample files.
+`samples prepare` fetches git source context for commit-based findings when possible. It writes the vulnerable file from the patch commit's first parent, the fixed file from the patch commit, `patch.diff`, and `candidate_hunks.jsonl` under `work/<CVE>/<sample_id>/`. If fetching fails, it keeps a partial bundle with `fetch_errors`; do not stop the whole run for one partial bundle.
+
+Snippet prompts are written under `prompts/snippets/`. Spawn one snippet worker per prompt. Workers return direct snippet JSON with `vulnerable_code` and `fixed_code`, not canonical sample files.
 
 Save snippet worker output under:
 
@@ -111,3 +113,5 @@ samples/<CVE>/<sample_id>/  review-ready sample artifacts
 ## Stop Condition
 
 Never mark samples `accepted` during the agentic flow. Stop after samples are imported with `status: needs_review`, then report the `samples/**/review.md` files for human review.
+
+Human review starts only after `samples import` has written `review.md`, `vulnerable.*`, and `fixed.*`.

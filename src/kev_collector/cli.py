@@ -74,6 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     sample_prepare = sample_subparsers.add_parser("prepare", help="prepare patch bundles and snippet prompts")
     add_sample_filter_args(sample_prepare)
     sample_prepare.add_argument("--force", action="store_true", help="rebuild existing bundles/prompts")
+    sample_prepare.add_argument("--no-fetch-code", action="store_true", help="create bundles/prompts without git fetching")
     sample_prepare.set_defaults(func=cmd_samples_prepare)
 
     sample_import = sample_subparsers.add_parser("import", help="create review-ready samples from snippet JSON")
@@ -207,9 +208,10 @@ def cmd_samples_prepare(args: argparse.Namespace) -> int:
         level=args.level,
         min_confidence=args.min_confidence,
         force=args.force,
+        fetch_code=not args.no_fetch_code,
     )
     for item in prepared:
-        print(f"prepared {item['cve_id']} {item['sample_id']} -> {item['bundle_dir']}")
+        print(f"prepared {item['cve_id']} {item['sample_id']} [{item['fetch_status']}] -> {item['bundle_dir']}")
         print(f"prompt {item['prompt_path']}")
     if not prepared:
         print("prepared 0 sample candidate(s)")

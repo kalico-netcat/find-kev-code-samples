@@ -66,7 +66,9 @@ bin/kev-collector samples prepare --limit 5 --level official_patch --min-confide
 
 These commands compute a stable `sample_key` and skip candidates already present in `samples/`, `work/`, or `agent-output/snippets/`.
 
-`samples prepare` writes temporary patch-bundle artifacts under `work/` and snippet-worker prompts under `prompts/snippets/`. Give each snippet prompt to one worker agent. The worker should return direct snippet JSON with `vulnerable_code` and `fixed_code`; save that output under:
+`samples prepare` fetches git commit source context when possible. For commit-based findings, it writes the vulnerable file from the patch commit's first parent, the fixed file from the patch commit, a focused diff, and hunk metadata under `work/`. If fetching fails, it keeps a partial bundle with fetch errors so the rest of the batch can continue. Use `--no-fetch-code` for offline prompt-only bundle generation.
+
+The snippet-worker prompts are written under `prompts/snippets/`. Give each snippet prompt to one worker agent. The worker should return direct snippet JSON with `vulnerable_code` and `fixed_code`; save that output under:
 
 ```text
 agent-output/snippets/<CVE>/<sample_id>.json
@@ -80,7 +82,7 @@ bin/kev-collector samples import agent-output/snippets/CVE-YYYY-NNNN/sample.json
 
 ## Human Review
 
-After samples are imported, list review cards:
+Human review happens after `samples import`, when `samples/<CVE>/<sample_id>/review.md`, `vulnerable.*`, and `fixed.*` exist. List review cards with:
 
 ```sh
 bin/kev-collector samples review-list
