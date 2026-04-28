@@ -2,6 +2,20 @@
 
 This repo collects research evidence for real-world vulnerable code samples tied to CISA KEV CVEs. The collector is the source of truth for generated files; agents provide bounded research findings.
 
+## Full Collection Flow
+
+When the user asks to "run a KEV collection pass", "collect samples", "do a full agentic pass", or "prepare samples for review", act as the orchestrator and follow `docs/full-run-orchestrator.md`.
+
+The user should only need to provide intent and optional run parameters:
+
+- research batch count
+- batch size
+- sample candidate limit
+- evidence level
+- minimum confidence
+
+If the user omits parameters, use the defaults in `docs/full-run-orchestrator.md`. Do not require the user to mention `AGENTS.md` or the runbook by name.
+
 ## Roles
 
 ### Orchestrator

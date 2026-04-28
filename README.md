@@ -17,6 +17,18 @@ All generated artifacts are local files under `data/`, `batches/`, and `samples/
 
 Use one orchestrator and many batch workers. The orchestrator owns repo state; each worker gets exactly one `batches/batch-NNNN.jsonl` file and returns findings JSONL only.
 
+## How To Ask The Agent
+
+Use a short natural request. The agent should discover the workflow from `AGENTS.md` and follow [docs/full-run-orchestrator.md](docs/full-run-orchestrator.md).
+
+```text
+Run a KEV collection pass with 3 research batches, batch size 10, and 5 sample candidates. Stop before accepting samples.
+```
+
+If you omit parameters, the default run is 3 research batches, batch size 10, 5 sample candidates, `official_patch` evidence, and minimum confidence 0.85.
+
+## Manual Research Flow
+
 ```sh
 bin/kev-collector fetch
 bin/kev-collector rank
