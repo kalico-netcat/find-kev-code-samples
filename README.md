@@ -64,15 +64,23 @@ bin/kev-collector samples candidates --limit 5 --level official_patch --min-conf
 bin/kev-collector samples prepare --limit 5 --level official_patch --min-confidence 0.85
 ```
 
-These commands compute a stable `sample_key` and skip candidates already present in `samples/`, `work/`, or `proposals/`. Snippet workers should return proposal JSON only; the collector materializes review-ready samples from proposals:
+These commands compute a stable `sample_key` and skip candidates already present in `samples/`, `work/`, or `agent-output/snippets/`.
+
+`samples prepare` writes temporary patch-bundle artifacts under `work/` and snippet-worker prompts under `prompts/snippets/`. Give each snippet prompt to one worker agent. The worker should return direct snippet JSON with `vulnerable_code` and `fixed_code`; save that output under:
+
+```text
+agent-output/snippets/<CVE>/<sample_id>.json
+```
+
+Then import snippet JSON into review-ready sample folders:
 
 ```sh
-bin/kev-collector samples materialize proposals/CVE-YYYY-NNNN/sample.json
+bin/kev-collector samples import agent-output/snippets/CVE-YYYY-NNNN/sample.json
 ```
 
 ## Human Review
 
-After samples are materialized, list review cards:
+After samples are imported, list review cards:
 
 ```sh
 bin/kev-collector samples review-list
@@ -88,4 +96,4 @@ bin/kev-collector samples review-list --status needs_more_evidence
 bin/kev-collector samples review-list --jsonl
 ```
 
-The command defaults to `status: needs_review` and prints each sample's `review.md` path. It may print nothing until `samples materialize` has created sample folders.
+The command defaults to `status: needs_review` and prints each sample's `review.md` path. It may print nothing until `samples import` has created sample folders.

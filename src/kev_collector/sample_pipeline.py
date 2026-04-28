@@ -20,11 +20,11 @@ SLUG_RE = re.compile(r"[^a-z0-9_.-]+")
 class ExistingWork:
     sample_keys: set[str]
     bundle_keys: set[str]
-    proposal_keys: set[str]
+    snippet_keys: set[str]
 
     @property
     def all_keys(self) -> set[str]:
-        return self.sample_keys | self.bundle_keys | self.proposal_keys
+        return self.sample_keys | self.bundle_keys | self.snippet_keys
 
     def reason_for(self, sample_key: str) -> str:
         reasons = []
@@ -32,8 +32,8 @@ class ExistingWork:
             reasons.append("sample")
         if sample_key in self.bundle_keys:
             reasons.append("bundle")
-        if sample_key in self.proposal_keys:
-            reasons.append("proposal")
+        if sample_key in self.snippet_keys:
+            reasons.append("snippet")
         return "already_exists:" + ",".join(reasons) if reasons else ""
 
 
@@ -126,19 +126,19 @@ def prepare_sample_candidates(
     return prepared
 
 
-def materialize_proposals(root: Path, proposal_paths: list[Path], force: bool = False) -> list[Path]:
+def import_snippets(root: Path, snippet_paths: list[Path], force: bool = False) -> list[Path]:
     existing = scan_existing_work(root)
-    materialized: list[Path] = []
-    for proposal_path in proposal_paths:
-        proposal = read_json(resolve(root, proposal_path))
-        validate_proposal(proposal)
-        sample_key = str(proposal["sample_key"])
+    imported: list[Path] = []
+    for snippet_path in snippet_paths:
+        snippet = read_json(resolve(root, snippet_path))
+        validate_snippet_json(snippet)
+        sample_key = str(snippet["sample_key"])
         if sample_key in existing.sample_keys and not force:
-            raise ValueError(f"{proposal_path}: sample_key already materialized: {sample_key}")
+            raise ValueError(f"{snippet_path}: sample_key already imported: {sample_key}")
 
-        cve_id = str(proposal["cve_id"])
-        sample_id = str(proposal["sample_id"])
-        language = str(proposal.get("language") or "txt")
+        cve_id = str(snippet["cve_id"])
+        sample_id = str(snippet["sample_id"])
+        language = str(snippet.get("language") or "txt")
         extension = normalize_extension(language)
         sample_dir = root / "samples" / cve_id / sample_id
         sample_dir.mkdir(parents=True, exist_ok=True)
@@ -147,31 +147,31 @@ def materialize_proposals(root: Path, proposal_paths: list[Path], force: bool = 
             "cve_id": cve_id,
             "sample_id": sample_id,
             "sample_key": sample_key,
-            "source_finding_key": proposal["source_finding_key"],
+            "source_finding_key": snippet["source_finding_key"],
             "status": "needs_review",
             "language": language,
-            "source_urls": proposal.get("source_urls", []),
-            "repo_urls": proposal.get("repo_urls", []),
-            "patch_refs": proposal.get("patch_refs", []),
-            "affected_files": [proposal["file_path"]],
+            "source_urls": snippet.get("source_urls", []),
+            "repo_urls": snippet.get("repo_urls", []),
+            "patch_refs": snippet.get("patch_refs", []),
+            "affected_files": [snippet["file_path"]],
             "license": {
-                "name": proposal.get("license", ""),
+                "name": snippet.get("license", ""),
                 "url": "",
                 "notes": "",
             },
             "provenance": {
-                "preferred_source": proposal.get("evidence_level", ""),
-                "extraction_notes": proposal.get("rationale", ""),
+                "preferred_source": snippet.get("evidence_level", ""),
+                "extraction_notes": snippet.get("rationale", ""),
             },
         }
         write_json(sample_dir / "metadata.json", metadata)
-        (sample_dir / f"vulnerable.{extension}").write_text(proposal["vulnerable_code"], encoding="utf-8")
-        (sample_dir / f"fixed.{extension}").write_text(proposal["fixed_code"], encoding="utf-8")
-        (sample_dir / "evidence.md").write_text(render_evidence(proposal), encoding="utf-8")
-        (sample_dir / "review.md").write_text(render_review(proposal), encoding="utf-8")
-        materialized.append(sample_dir)
+        (sample_dir / f"vulnerable.{extension}").write_text(snippet["vulnerable_code"], encoding="utf-8")
+        (sample_dir / f"fixed.{extension}").write_text(snippet["fixed_code"], encoding="utf-8")
+        (sample_dir / "evidence.md").write_text(render_evidence(snippet), encoding="utf-8")
+        (sample_dir / "review.md").write_text(render_review(snippet), encoding="utf-8")
+        imported.append(sample_dir)
         existing.sample_keys.add(sample_key)
-    return materialized
+    return imported
 
 
 def list_sample_reviews(root: Path, status: str = "needs_review") -> list[dict[str, Any]]:
@@ -334,7 +334,7 @@ def scan_existing_work(root: Path) -> ExistingWork:
     return ExistingWork(
         sample_keys=scan_metadata_keys(root / "samples"),
         bundle_keys=scan_metadata_keys(root / "work"),
-        proposal_keys=scan_proposal_keys(root / "proposals"),
+        snippet_keys=scan_snippet_keys(root / "agent-output" / "snippets"),
     )
 
 
@@ -353,7 +353,7 @@ def scan_metadata_keys(root: Path) -> set[str]:
     return keys
 
 
-def scan_proposal_keys(root: Path) -> set[str]:
+def scan_snippet_keys(root: Path) -> set[str]:
     keys: set[str] = set()
     if not root.exists():
         return keys
@@ -394,7 +394,7 @@ Use the prepared patch bundle at `{bundle_dir}`. Choose the smallest vulnerable/
 
 Return JSON only. Do not write files.
 
-## Required Proposal Shape
+## Required Snippet JSON Shape
 
 ```json
 {schema_json}
@@ -405,7 +405,7 @@ Return JSON only. Do not write files.
 - Prefer the file path already identified by the finding when it contains the vulnerable logic.
 - Include enough surrounding context for a reviewer to understand why the vulnerable code is risky.
 - Do not include unrelated refactors, test-only changes, or broad whole-file excerpts unless unavoidable.
-- If the bundle does not yet contain fetched code, use the source URLs and patch refs to propose the expected file/range and include uncertainty.
+- If the bundle does not yet contain fetched code, use the source URLs and patch refs to return the best direct vulnerable_code/fixed_code JSON you can, and include uncertainty.
 
 ## Finding
 
@@ -415,7 +415,7 @@ Return JSON only. Do not write files.
 """
 
 
-def validate_proposal(proposal: dict[str, Any]) -> None:
+def validate_snippet_json(snippet: dict[str, Any]) -> None:
     required = {
         "cve_id",
         "sample_id",
@@ -426,15 +426,15 @@ def validate_proposal(proposal: dict[str, Any]) -> None:
         "fixed_code",
         "rationale",
     }
-    missing = sorted(field for field in required if not proposal.get(field))
+    missing = sorted(field for field in required if not snippet.get(field))
     if missing:
-        raise ValueError(f"proposal missing fields: {', '.join(missing)}")
+        raise ValueError(f"snippet JSON missing fields: {', '.join(missing)}")
 
 
-def render_evidence(proposal: dict[str, Any]) -> str:
-    source_urls = "\n".join(f"- {url}" for url in proposal.get("source_urls", [])) or "- TODO"
-    patch_refs = "\n".join(f"- {ref}" for ref in proposal.get("patch_refs", [])) or "- TODO"
-    return f"""# Evidence for {proposal['cve_id']} / {proposal['sample_id']}
+def render_evidence(snippet: dict[str, Any]) -> str:
+    source_urls = "\n".join(f"- {url}" for url in snippet.get("source_urls", [])) or "- TODO"
+    patch_refs = "\n".join(f"- {ref}" for ref in snippet.get("patch_refs", [])) or "- TODO"
+    return f"""# Evidence for {snippet['cve_id']} / {snippet['sample_id']}
 
 ## Source Links
 
@@ -446,46 +446,46 @@ def render_evidence(proposal: dict[str, Any]) -> str:
 
 ## Rationale
 
-{proposal.get('rationale', '')}
+{snippet.get('rationale', '')}
 """
 
 
-def render_review(proposal: dict[str, Any]) -> str:
-    diff = proposal.get("diff", "")
+def render_review(snippet: dict[str, Any]) -> str:
+    diff = snippet.get("diff", "")
     if not diff:
-        diff = "(No focused diff supplied by proposal.)"
-    return f"""# {proposal['cve_id']} / {proposal['sample_id']}
+        diff = "(No focused diff supplied by snippet JSON.)"
+    return f"""# {snippet['cve_id']} / {snippet['sample_id']}
 
-Sample key: `{proposal['sample_key']}`
-Source finding: `{proposal['source_finding_key']}`
+Sample key: `{snippet['sample_key']}`
+Source finding: `{snippet['source_finding_key']}`
 Status: needs_review
-Evidence level: {proposal.get('evidence_level', '')}
-Confidence: {proposal.get('confidence', '')}
-License: {proposal.get('license', '')}
+Evidence level: {snippet.get('evidence_level', '')}
+Confidence: {snippet.get('confidence', '')}
+License: {snippet.get('license', '')}
 
 ## Source
 
-- Repo: {', '.join(proposal.get('repo_urls', []))}
-- Source URLs: {', '.join(proposal.get('source_urls', []))}
-- Patch refs: {', '.join(proposal.get('patch_refs', []))}
+- Repo: {', '.join(snippet.get('repo_urls', []))}
+- Source URLs: {', '.join(snippet.get('source_urls', []))}
+- Patch refs: {', '.join(snippet.get('patch_refs', []))}
 
 ## Selected Snippet
 
-File: `{proposal['file_path']}`
-Vulnerable range: {format_range(proposal.get('vulnerable_range'))}
-Fixed range: {format_range(proposal.get('fixed_range'))}
+File: `{snippet['file_path']}`
+Vulnerable range: {format_range(snippet.get('vulnerable_range'))}
+Fixed range: {format_range(snippet.get('fixed_range'))}
 
 ## Why This Snippet
 
-{proposal.get('rationale', '')}
+{snippet.get('rationale', '')}
 
 ## Uncertainty
 
-{proposal.get('uncertainty', '')}
+{snippet.get('uncertainty', '')}
 
 ## Reviewer Notes
 
-{proposal.get('review_notes', '')}
+{snippet.get('review_notes', '')}
 
 ## Diff
 

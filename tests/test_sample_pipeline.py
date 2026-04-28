@@ -9,9 +9,9 @@ from kev_collector.io import write_json, write_jsonl
 from kev_collector.cli import main
 from kev_collector.sample_pipeline import (
     build_sample_candidate,
+    import_snippets,
     list_sample_reviews,
     list_sample_candidates,
-    materialize_proposals,
     prepare_sample_candidates,
 )
 
@@ -34,7 +34,7 @@ def fixture_finding(cve_id: str = "CVE-2020-11023") -> dict:
 
 
 class SamplePipelineTests(unittest.TestCase):
-    def test_candidates_skip_existing_materialized_sample(self) -> None:
+    def test_candidates_skip_existing_sample(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             finding = fixture_finding()
@@ -76,6 +76,20 @@ class SamplePipelineTests(unittest.TestCase):
 
             self.assertEqual(prepared, [])
 
+    def test_candidates_skip_existing_snippet_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            finding = fixture_finding()
+            candidate = build_sample_candidate(finding)
+            write_jsonl(root / "data/findings.jsonl", [finding])
+            write_json(root / "agent-output/snippets/CVE-2020-11023/sample.json", snippet_for(candidate))
+
+            candidates = list_sample_candidates(root)
+
+            self.assertEqual(candidates, [])
+            skipped = list_sample_candidates(root, include_skipped=True)
+            self.assertEqual(skipped[0]["skip_reason"], "already_exists:snippet")
+
     def test_prepare_creates_bundle_and_prompt_for_new_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -90,13 +104,13 @@ class SamplePipelineTests(unittest.TestCase):
             self.assertTrue((bundle_dir / "finding.json").exists())
             self.assertTrue(prompt_path.exists())
 
-    def test_materialize_refuses_duplicate_sample_key_by_default(self) -> None:
+    def test_import_refuses_duplicate_sample_key_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             finding = fixture_finding()
             candidate = build_sample_candidate(finding)
-            proposal = proposal_for(candidate)
-            write_json(root / "proposals/CVE-2020-11023/sample.json", proposal)
+            snippet = snippet_for(candidate)
+            write_json(root / "agent-output/snippets/CVE-2020-11023/sample.json", snippet)
             write_json(
                 root / "samples/CVE-2020-11023/existing/metadata.json",
                 {
@@ -107,17 +121,29 @@ class SamplePipelineTests(unittest.TestCase):
                 },
             )
 
-            with self.assertRaisesRegex(ValueError, "already materialized"):
-                materialize_proposals(root, [Path("proposals/CVE-2020-11023/sample.json")])
+            with self.assertRaisesRegex(ValueError, "already imported"):
+                import_snippets(root, [Path("agent-output/snippets/CVE-2020-11023/sample.json")])
 
-    def test_materialize_writes_review_ready_sample(self) -> None:
+    def test_import_requires_snippet_code_fields(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             candidate = build_sample_candidate(fixture_finding())
-            proposal_path = root / "proposals/CVE-2020-11023/sample.json"
-            write_json(proposal_path, proposal_for(candidate))
+            snippet = snippet_for(candidate)
+            snippet.pop("vulnerable_code")
+            snippet_path = root / "agent-output/snippets/CVE-2020-11023/sample.json"
+            write_json(snippet_path, snippet)
 
-            paths = materialize_proposals(root, [proposal_path])
+            with self.assertRaisesRegex(ValueError, "snippet JSON missing fields: vulnerable_code"):
+                import_snippets(root, [snippet_path])
+
+    def test_import_writes_review_ready_sample(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate = build_sample_candidate(fixture_finding())
+            snippet_path = root / "agent-output/snippets/CVE-2020-11023/sample.json"
+            write_json(snippet_path, snippet_for(candidate))
+
+            paths = import_snippets(root, [snippet_path])
 
             sample_dir = paths[0]
             self.assertTrue((sample_dir / "metadata.json").exists())
@@ -166,7 +192,7 @@ class SamplePipelineTests(unittest.TestCase):
             self.assertEqual(rows[0]["status"], "needs_review")
 
 
-def proposal_for(candidate: dict) -> dict:
+def snippet_for(candidate: dict) -> dict:
     finding = candidate["finding"]
     return {
         "cve_id": candidate["cve_id"],

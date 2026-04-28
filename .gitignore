@@ -9,5 +9,5 @@ samples/
 findings/
 prompts/
 work/
-proposals/
+agent-output/
 .cache/

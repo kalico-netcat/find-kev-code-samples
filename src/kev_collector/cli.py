@@ -11,9 +11,9 @@ from .kev import DEFAULT_KEV_URL, fetch_kev_json, normalize_kev_feed
 from .prompts import render_batch_prompt
 from .rank import rank_records
 from .sample_pipeline import (
+    import_snippets,
     list_sample_candidates,
     list_sample_reviews,
-    materialize_proposals,
     prepare_sample_candidates,
 )
 from .samples import create_sample
@@ -63,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     prompt_batch.add_argument("--output", type=Path, help="write prompt to this Markdown file")
     prompt_batch.set_defaults(func=cmd_prompt_batch)
 
-    samples = subparsers.add_parser("samples", help="sample candidate and materialization workflow")
+    samples = subparsers.add_parser("samples", help="sample candidate and review workflow")
     sample_subparsers = samples.add_subparsers(dest="samples_command", required=True)
 
     sample_candidates = sample_subparsers.add_parser("candidates", help="list duplicate-safe sample candidates")
@@ -76,10 +76,10 @@ def build_parser() -> argparse.ArgumentParser:
     sample_prepare.add_argument("--force", action="store_true", help="rebuild existing bundles/prompts")
     sample_prepare.set_defaults(func=cmd_samples_prepare)
 
-    sample_materialize = sample_subparsers.add_parser("materialize", help="materialize samples from proposals")
-    sample_materialize.add_argument("proposals", nargs="+", type=Path, help="proposal JSON file(s)")
-    sample_materialize.add_argument("--force", action="store_true", help="overwrite an existing sample with the same key")
-    sample_materialize.set_defaults(func=cmd_samples_materialize)
+    sample_import = sample_subparsers.add_parser("import", help="create review-ready samples from snippet JSON")
+    sample_import.add_argument("snippets", nargs="+", type=Path, help="snippet JSON file(s)")
+    sample_import.add_argument("--force", action="store_true", help="overwrite an existing sample with the same key")
+    sample_import.set_defaults(func=cmd_samples_import)
 
     sample_review_list = sample_subparsers.add_parser("review-list", help="list samples awaiting human review")
     sample_review_list.add_argument(
@@ -216,12 +216,12 @@ def cmd_samples_prepare(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_samples_materialize(args: argparse.Namespace) -> int:
-    paths = materialize_proposals(args.root, args.proposals, force=args.force)
+def cmd_samples_import(args: argparse.Namespace) -> int:
+    paths = import_snippets(args.root, args.snippets, force=args.force)
     for path in paths:
-        print(f"materialized {path}")
+        print(f"imported {path}")
     if not paths:
-        print("materialized 0 sample(s)")
+        print("imported 0 sample(s)")
     return 0
 
 

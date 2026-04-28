@@ -11,7 +11,7 @@ The human provides intent and optional parameters. The orchestrator reads this r
 - Sample candidates: `5`
 - Evidence level: `official_patch`
 - Minimum confidence: `0.85`
-- Stop condition: materialized samples with `status: needs_review`
+- Stop condition: imported samples with `status: needs_review`
 
 ## Current Implemented Flow
 
@@ -54,26 +54,26 @@ bin/kev-collector samples candidates --limit 5 --level official_patch --min-conf
 bin/kev-collector samples prepare --limit 5 --level official_patch --min-confidence 0.85
 ```
 
-The candidate and prepare commands are duplicate-safe. They skip work that already has a matching `sample_key` in `samples/`, `work/`, or `proposals/` before any repo-fetch or agent work should happen.
+The candidate and prepare commands are duplicate-safe. They skip work that already has a matching `sample_key` in `samples/`, `work/`, or `agent-output/snippets/` before any repo-fetch or agent work should happen.
 
-`samples prepare` writes patch bundle metadata under `work/` and snippet prompts under `prompts/snippets/`. Spawn one snippet worker per prompt. Workers return snippet proposals only, not canonical sample files.
+`samples prepare` writes patch bundle metadata under `work/` and snippet prompts under `prompts/snippets/`. Spawn one snippet worker per prompt. Workers return direct snippet JSON with `vulnerable_code` and `fixed_code`, not canonical sample files.
 
-Save proposals under:
+Save snippet worker output under:
 
 ```text
-proposals/<CVE>/<sample_id>.json
+agent-output/snippets/<CVE>/<sample_id>.json
 ```
 
-Then materialize review-ready samples:
+Then import snippet JSON into review-ready samples:
 
 ```sh
-bin/kev-collector samples materialize proposals/**/*.json
+bin/kev-collector samples import agent-output/snippets/**/*.json
 bin/kev-collector validate
 ```
 
 Final samples should remain `status: needs_review`.
 
-Use `--force` only when intentionally rebuilding existing patch bundles or overwriting an existing materialized sample with the same `sample_key`.
+Use `--force` only when intentionally rebuilding existing patch bundles or overwriting an existing imported sample with the same `sample_key`.
 
 ## Worker Boundaries
 
@@ -88,8 +88,8 @@ Research workers:
 Snippet workers:
 
 - receive exactly one snippet prompt or patch bundle
-- choose minimal vulnerable/fixed snippet ranges
-- return a JSON proposal only
+- choose minimal vulnerable/fixed code snippets
+- return direct snippet JSON only
 - do not write canonical `samples/` files
 - include rationale and uncertainty for human review
 
@@ -104,10 +104,10 @@ findings/batch-NNNN.jsonl   worker findings
 data/findings.jsonl         canonical merged findings
 work/<CVE>/<sample_id>/     patch bundles, temporary
 prompts/snippets/*.md       snippet worker prompts
-proposals/<CVE>/*.json      snippet worker proposals
+agent-output/snippets/*.json raw snippet worker output
 samples/<CVE>/<sample_id>/  review-ready sample artifacts
 ```
 
 ## Stop Condition
 
-Never mark samples `accepted` during the agentic flow. Stop after samples are materialized with `status: needs_review`, then report the `samples/**/review.md` files for human review.
+Never mark samples `accepted` during the agentic flow. Stop after samples are imported with `status: needs_review`, then report the `samples/**/review.md` files for human review.
