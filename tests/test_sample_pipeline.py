@@ -1,10 +1,15 @@
 from pathlib import Path
+import contextlib
+import io
+import json
 import tempfile
 import unittest
 
 from kev_collector.io import write_json, write_jsonl
+from kev_collector.cli import main
 from kev_collector.sample_pipeline import (
     build_sample_candidate,
+    list_sample_reviews,
     list_sample_candidates,
     materialize_proposals,
     prepare_sample_candidates,
@@ -123,6 +128,43 @@ class SamplePipelineTests(unittest.TestCase):
             self.assertIn("Sample key:", review)
             self.assertIn("Reviewer Checklist", review)
 
+    def test_review_list_defaults_to_needs_review(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_sample_metadata(root, "CVE-2020-11023", "needs", "needs_review")
+            write_sample_metadata(root, "CVE-2020-11024", "accepted", "accepted")
+
+            records = list_sample_reviews(root)
+
+            self.assertEqual([record["sample_id"] for record in records], ["needs"])
+            self.assertFalse(records[0]["missing_review"])
+
+    def test_review_list_status_all_and_missing_review(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_sample_metadata(root, "CVE-2020-11023", "needs", "needs_review")
+            write_sample_metadata(root, "CVE-2020-11024", "accepted", "accepted", with_review=False)
+
+            records = list_sample_reviews(root, status="all")
+
+            self.assertEqual([record["sample_id"] for record in records], ["needs", "accepted"])
+            accepted = [record for record in records if record["sample_id"] == "accepted"][0]
+            self.assertTrue(accepted["missing_review"])
+
+    def test_review_list_cli_jsonl(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_sample_metadata(root, "CVE-2020-11023", "needs", "needs_review")
+            stdout = io.StringIO()
+
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(["--root", str(root), "samples", "review-list", "--jsonl"])
+
+            self.assertEqual(exit_code, 0)
+            rows = [json.loads(line) for line in stdout.getvalue().splitlines()]
+            self.assertEqual(rows[0]["cve_id"], "CVE-2020-11023")
+            self.assertEqual(rows[0]["status"], "needs_review")
+
 
 def proposal_for(candidate: dict) -> dict:
     finding = candidate["finding"]
@@ -147,6 +189,30 @@ def proposal_for(candidate: dict) -> dict:
         "evidence_level": finding["evidence_level"],
         "confidence": finding["confidence"],
     }
+
+
+def write_sample_metadata(
+    root: Path,
+    cve_id: str,
+    sample_id: str,
+    status: str,
+    with_review: bool = True,
+) -> None:
+    sample_dir = root / "samples" / cve_id / sample_id
+    write_json(
+        sample_dir / "metadata.json",
+        {
+            "cve_id": cve_id,
+            "sample_id": sample_id,
+            "sample_key": f"{cve_id}|repo|commit|file",
+            "source_finding_key": f"{cve_id}|source|patch",
+            "status": status,
+            "confidence": 0.94,
+            "provenance": {"preferred_source": "official_patch"},
+        },
+    )
+    if with_review:
+        (sample_dir / "review.md").write_text("# Review\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

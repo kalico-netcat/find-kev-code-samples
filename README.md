@@ -69,3 +69,23 @@ These commands compute a stable `sample_key` and skip candidates already present
 ```sh
 bin/kev-collector samples materialize proposals/CVE-YYYY-NNNN/sample.json
 ```
+
+## Human Review
+
+After samples are materialized, list review cards:
+
+```sh
+bin/kev-collector samples review-list
+```
+
+Useful variants:
+
+```sh
+bin/kev-collector samples review-list --status all
+bin/kev-collector samples review-list --status accepted
+bin/kev-collector samples review-list --status rejected
+bin/kev-collector samples review-list --status needs_more_evidence
+bin/kev-collector samples review-list --jsonl
+```
+
+The command defaults to `status: needs_review` and prints each sample's `review.md` path. It may print nothing until `samples materialize` has created sample folders.

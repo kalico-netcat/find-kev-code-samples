@@ -10,7 +10,12 @@ from .io import read_json, read_jsonl, write_jsonl
 from .kev import DEFAULT_KEV_URL, fetch_kev_json, normalize_kev_feed
 from .prompts import render_batch_prompt
 from .rank import rank_records
-from .sample_pipeline import list_sample_candidates, materialize_proposals, prepare_sample_candidates
+from .sample_pipeline import (
+    list_sample_candidates,
+    list_sample_reviews,
+    materialize_proposals,
+    prepare_sample_candidates,
+)
 from .samples import create_sample
 from .validate import validate_workspace
 
@@ -75,6 +80,15 @@ def build_parser() -> argparse.ArgumentParser:
     sample_materialize.add_argument("proposals", nargs="+", type=Path, help="proposal JSON file(s)")
     sample_materialize.add_argument("--force", action="store_true", help="overwrite an existing sample with the same key")
     sample_materialize.set_defaults(func=cmd_samples_materialize)
+
+    sample_review_list = sample_subparsers.add_parser("review-list", help="list samples awaiting human review")
+    sample_review_list.add_argument(
+        "--status",
+        default="needs_review",
+        choices=["needs_review", "accepted", "rejected", "needs_more_evidence", "all"],
+    )
+    sample_review_list.add_argument("--jsonl", action="store_true", help="emit JSONL records")
+    sample_review_list.set_defaults(func=cmd_samples_review_list)
 
     new_sample = subparsers.add_parser("new-sample", help="scaffold a triage-ready sample directory")
     new_sample.add_argument("cve_id")
@@ -208,6 +222,24 @@ def cmd_samples_materialize(args: argparse.Namespace) -> int:
         print(f"materialized {path}")
     if not paths:
         print("materialized 0 sample(s)")
+    return 0
+
+
+def cmd_samples_review_list(args: argparse.Namespace) -> int:
+    records = list_sample_reviews(args.root, status=args.status)
+    if args.jsonl:
+        import json
+
+        for record in records:
+            print(json.dumps(record, sort_keys=True, separators=(",", ":")))
+    else:
+        for record in records:
+            confidence = record["confidence"] if record["confidence"] != "" else "-"
+            marker = " MISSING_REVIEW" if record["missing_review"] else ""
+            print(
+                f"{record['cve_id']} {record['sample_id']} {record['status']} "
+                f"{record['evidence_level'] or '-'} {confidence} {record['review_path']}{marker}"
+            )
     return 0
 
 

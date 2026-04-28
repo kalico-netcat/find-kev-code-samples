@@ -174,6 +174,41 @@ def materialize_proposals(root: Path, proposal_paths: list[Path], force: bool = 
     return materialized
 
 
+def list_sample_reviews(root: Path, status: str = "needs_review") -> list[dict[str, Any]]:
+    allowed_statuses = {"needs_review", "accepted", "rejected", "needs_more_evidence", "all"}
+    if status not in allowed_statuses:
+        raise ValueError(f"invalid review status {status!r}; expected one of: {', '.join(sorted(allowed_statuses))}")
+
+    samples_root = root / "samples"
+    records: list[dict[str, Any]] = []
+    if not samples_root.exists():
+        return records
+
+    for metadata_path in sorted(samples_root.glob("**/metadata.json")):
+        metadata = read_json(metadata_path)
+        if not isinstance(metadata, dict):
+            continue
+        sample_status = str(metadata.get("status") or "")
+        if status != "all" and sample_status != status:
+            continue
+
+        sample_dir = metadata_path.parent
+        review_path = sample_dir / "review.md"
+        provenance = metadata.get("provenance") if isinstance(metadata.get("provenance"), dict) else {}
+        records.append(
+            {
+                "cve_id": str(metadata.get("cve_id") or ""),
+                "sample_id": str(metadata.get("sample_id") or ""),
+                "status": sample_status,
+                "evidence_level": str(provenance.get("preferred_source") or metadata.get("evidence_level") or ""),
+                "confidence": metadata.get("confidence", ""),
+                "review_path": str(review_path),
+                "missing_review": not review_path.exists(),
+            }
+        )
+    return records
+
+
 def write_patch_bundle(bundle_dir: Path, candidate: dict[str, Any], force: bool = False) -> None:
     bundle_dir.mkdir(parents=True, exist_ok=True)
     metadata_path = bundle_dir / "metadata.json"
