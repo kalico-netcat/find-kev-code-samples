@@ -54,3 +54,18 @@ Use `--size 10` for difficult/manual research batches and `--size 20` for normal
 Worker findings must include an `evidence_level` value. Allowed levels are `official_patch`, `official_advisory`, `upstream_release`, `third_party_analysis`, `weak_lead`, and `no_public_code`.
 
 Use `evidence_level` for the kind of evidence and `confidence` for CVE-to-code linkage certainty. These are independent: an official patch can still have low confidence if the worker cannot clearly prove it is the patch for that CVE.
+
+## Sample Pulling
+
+After findings are ingested, list and prepare high-confidence sample candidates:
+
+```sh
+bin/kev-collector samples candidates --limit 5 --level official_patch --min-confidence 0.85
+bin/kev-collector samples prepare --limit 5 --level official_patch --min-confidence 0.85
+```
+
+These commands compute a stable `sample_key` and skip candidates already present in `samples/`, `work/`, or `proposals/`. Snippet workers should return proposal JSON only; the collector materializes review-ready samples from proposals:
+
+```sh
+bin/kev-collector samples materialize proposals/CVE-YYYY-NNNN/sample.json
+```

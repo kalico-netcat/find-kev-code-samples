@@ -10,6 +10,7 @@ from .io import read_json, read_jsonl, write_jsonl
 from .kev import DEFAULT_KEV_URL, fetch_kev_json, normalize_kev_feed
 from .prompts import render_batch_prompt
 from .rank import rank_records
+from .sample_pipeline import list_sample_candidates, materialize_proposals, prepare_sample_candidates
 from .samples import create_sample
 from .validate import validate_workspace
 
@@ -57,6 +58,24 @@ def build_parser() -> argparse.ArgumentParser:
     prompt_batch.add_argument("--output", type=Path, help="write prompt to this Markdown file")
     prompt_batch.set_defaults(func=cmd_prompt_batch)
 
+    samples = subparsers.add_parser("samples", help="sample candidate and materialization workflow")
+    sample_subparsers = samples.add_subparsers(dest="samples_command", required=True)
+
+    sample_candidates = sample_subparsers.add_parser("candidates", help="list duplicate-safe sample candidates")
+    add_sample_filter_args(sample_candidates)
+    sample_candidates.add_argument("--include-skipped", action="store_true", help="include already-started candidates")
+    sample_candidates.set_defaults(func=cmd_samples_candidates)
+
+    sample_prepare = sample_subparsers.add_parser("prepare", help="prepare patch bundles and snippet prompts")
+    add_sample_filter_args(sample_prepare)
+    sample_prepare.add_argument("--force", action="store_true", help="rebuild existing bundles/prompts")
+    sample_prepare.set_defaults(func=cmd_samples_prepare)
+
+    sample_materialize = sample_subparsers.add_parser("materialize", help="materialize samples from proposals")
+    sample_materialize.add_argument("proposals", nargs="+", type=Path, help="proposal JSON file(s)")
+    sample_materialize.add_argument("--force", action="store_true", help="overwrite an existing sample with the same key")
+    sample_materialize.set_defaults(func=cmd_samples_materialize)
+
     new_sample = subparsers.add_parser("new-sample", help="scaffold a triage-ready sample directory")
     new_sample.add_argument("cve_id")
     new_sample.add_argument("sample_id")
@@ -68,6 +87,13 @@ def build_parser() -> argparse.ArgumentParser:
     validate.set_defaults(func=cmd_validate)
 
     return parser
+
+
+def add_sample_filter_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--findings", type=Path, default=Path("data/findings.jsonl"))
+    parser.add_argument("--limit", type=int, default=5)
+    parser.add_argument("--level", default="official_patch")
+    parser.add_argument("--min-confidence", type=float, default=0.85)
 
 
 def resolve(root: Path, path: Path) -> Path:
@@ -130,6 +156,58 @@ def cmd_prompt_batch(args: argparse.Namespace) -> int:
         print(f"wrote prompt to {output}")
     else:
         print(prompt, end="")
+    return 0
+
+
+def cmd_samples_candidates(args: argparse.Namespace) -> int:
+    candidates = list_sample_candidates(
+        args.root,
+        findings_path=args.findings,
+        level=args.level,
+        min_confidence=args.min_confidence,
+        limit=args.limit,
+        include_skipped=args.include_skipped,
+    )
+    for candidate in candidates:
+        public = {
+            "cve_id": candidate["cve_id"],
+            "sample_id": candidate["sample_id"],
+            "sample_key": candidate["sample_key"],
+            "repo_url": candidate["repo_url"],
+            "patch_ref": candidate["patch_ref"],
+            "file_path": candidate["file_path"],
+        }
+        if candidate.get("skip_reason"):
+            public["skip_reason"] = candidate["skip_reason"]
+        import json
+
+        print(json.dumps(public, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+def cmd_samples_prepare(args: argparse.Namespace) -> int:
+    prepared = prepare_sample_candidates(
+        args.root,
+        findings_path=args.findings,
+        limit=args.limit,
+        level=args.level,
+        min_confidence=args.min_confidence,
+        force=args.force,
+    )
+    for item in prepared:
+        print(f"prepared {item['cve_id']} {item['sample_id']} -> {item['bundle_dir']}")
+        print(f"prompt {item['prompt_path']}")
+    if not prepared:
+        print("prepared 0 sample candidate(s)")
+    return 0
+
+
+def cmd_samples_materialize(args: argparse.Namespace) -> int:
+    paths = materialize_proposals(args.root, args.proposals, force=args.force)
+    for path in paths:
+        print(f"materialized {path}")
+    if not paths:
+        print("materialized 0 sample(s)")
     return 0
 
 

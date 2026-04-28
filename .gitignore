@@ -8,3 +8,6 @@ batches/
 samples/
 findings/
 prompts/
+work/
+proposals/
+.cache/

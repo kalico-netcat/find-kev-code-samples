@@ -45,15 +45,18 @@ bin/kev-collector validate
 
 Summarize findings by `evidence_level` and call out batches or CVEs that need another pass.
 
-## Planned Sample Pulling Flow
+## Sample Pulling Flow
 
-When sample-pulling commands are implemented, continue from ingested findings:
+Continue from ingested findings:
 
 ```sh
+bin/kev-collector samples candidates --limit 5 --level official_patch --min-confidence 0.85
 bin/kev-collector samples prepare --limit 5 --level official_patch --min-confidence 0.85
 ```
 
-The command should prepare patch bundles under `work/` and snippet prompts under `prompts/`. Spawn one snippet worker per prompt. Workers return snippet proposals only, not canonical sample files.
+The candidate and prepare commands are duplicate-safe. They skip work that already has a matching `sample_key` in `samples/`, `work/`, or `proposals/` before any repo-fetch or agent work should happen.
+
+`samples prepare` writes patch bundle metadata under `work/` and snippet prompts under `prompts/snippets/`. Spawn one snippet worker per prompt. Workers return snippet proposals only, not canonical sample files.
 
 Save proposals under:
 
@@ -69,6 +72,8 @@ bin/kev-collector validate
 ```
 
 Final samples should remain `status: needs_review`.
+
+Use `--force` only when intentionally rebuilding existing patch bundles or overwriting an existing materialized sample with the same `sample_key`.
 
 ## Worker Boundaries
 
@@ -98,6 +103,7 @@ prompts/batch-NNNN.md       research worker prompts
 findings/batch-NNNN.jsonl   worker findings
 data/findings.jsonl         canonical merged findings
 work/<CVE>/<sample_id>/     patch bundles, temporary
+prompts/snippets/*.md       snippet worker prompts
 proposals/<CVE>/*.json      snippet worker proposals
 samples/<CVE>/<sample_id>/  review-ready sample artifacts
 ```

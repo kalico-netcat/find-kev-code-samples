@@ -16,6 +16,8 @@ The user should only need to provide intent and optional run parameters:
 
 If the user omits parameters, use the defaults in `docs/full-run-orchestrator.md`. Do not require the user to mention `AGENTS.md` or the runbook by name.
 
+During sample pulling, use the `samples candidates` and `samples prepare` commands before spawning snippet workers. These commands compute `sample_key` values and skip samples that already exist or are already in progress.
+
 ## Roles
 
 ### Orchestrator
