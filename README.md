@@ -22,10 +22,10 @@ Use one orchestrator and many batch workers. The orchestrator owns repo state; e
 Use a short natural request. The agent should discover the workflow from `AGENTS.md` and follow [docs/full-run-orchestrator.md](docs/full-run-orchestrator.md).
 
 ```text
-Run a KEV collection pass with 3 research batches, batch size 10, and 5 sample candidates. Stop before accepting samples.
+Run a KEV collection pass with 2 research batches, batch size 20, and 5 sample candidates.
 ```
 
-If you omit parameters, the default run is 3 research batches, batch size 10, 5 sample candidates, `official_patch` evidence, and minimum confidence 0.85.
+If you omit parameters, the recommended default run is 2 research batches, batch size 20, 5 sample candidates, `official_patch` evidence, and minimum confidence 0.85. This keeps normal passes modest while still allowing larger runs when requested.
 
 ## Manual Research Flow
 
@@ -49,7 +49,7 @@ bin/kev-collector ingest findings/batch-0001.jsonl
 bin/kev-collector validate
 ```
 
-Use `--size 10` for difficult/manual research batches and `--size 20` for normal KEV triage.
+Use `--size 10` for difficult/manual research batches, `--size 20` for normal KEV triage, and larger batches only for quick low-depth sweeps. Prefer increasing batch size or running another later pass over spawning more workers at once.
 
 Worker findings must include an `evidence_level` value. Allowed levels are `official_patch`, `official_advisory`, `upstream_release`, `third_party_analysis`, `weak_lead`, and `no_public_code`.
 
@@ -73,6 +73,8 @@ The snippet-worker prompts are written under `prompts/snippets/`. Give each snip
 ```text
 agent-output/snippets/<CVE>/<sample_id>.json
 ```
+
+Keep sample pulling modest unless you explicitly want broader fan-out. The default `--limit 5` creates up to 5 snippet prompts after `samples candidates` and `samples prepare` skip samples that already exist or are already in progress.
 
 Then import snippet JSON into review-ready sample folders:
 
