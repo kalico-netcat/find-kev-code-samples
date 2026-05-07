@@ -26,6 +26,8 @@ bin/kev-collector prompt-batch batches/batch-0001.jsonl --output prompts/batch-0
 bin/kev-collector prompt-batch batches/batch-0002.jsonl --output prompts/batch-0002.md
 ```
 
+`bin/kev-collector rank` excludes known-famous KEV examples by default because they are poor benchmark candidates for this dataset. Use `bin/kev-collector rank --include-famous` only when the run explicitly asks to include those famous samples.
+
 Spawn one research worker per generated batch prompt for the configured research batch count. Save each worker result under `findings/` with the matching batch name:
 
 ```text

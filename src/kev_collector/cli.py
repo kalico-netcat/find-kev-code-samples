@@ -44,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     rank = subparsers.add_parser("rank", help="score KEV records for likely public-code availability")
     rank.add_argument("--input", type=Path, default=Path("data/kev.jsonl"))
     rank.add_argument("--output", type=Path, default=Path("data/candidates.jsonl"))
+    rank.add_argument("--include-famous", action="store_true", help="include known-famous CVEs")
     rank.set_defaults(func=cmd_rank)
 
     batch = subparsers.add_parser("batch", help="write candidate research batches")
@@ -128,7 +129,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 def cmd_rank(args: argparse.Namespace) -> int:
     root = args.root
     records = read_jsonl(resolve(root, args.input))
-    ranked = rank_records(records)
+    ranked = rank_records(records, include_famous=args.include_famous)
     output = resolve(root, args.output)
     count = write_jsonl(output, ranked)
     print(f"wrote {count} candidates to {output}")

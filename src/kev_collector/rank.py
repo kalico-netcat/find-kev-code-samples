@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .known_famous import KNOWN_FAMOUS_CVES
+
 OPEN_SOURCE_HINTS = {
     "apache",
     "git",
@@ -68,7 +70,7 @@ PROPRIETARY_HINTS = {
 }
 
 
-def rank_record(record: dict[str, Any]) -> dict[str, Any]:
+def rank_record(record: dict[str, Any], *, include_famous: bool = False) -> dict[str, Any]:
     text = " ".join(
         str(record.get(field, ""))
         for field in ("vendor_project", "product", "vulnerability_name", "short_description")
@@ -108,8 +110,17 @@ def rank_record(record: dict[str, Any]) -> dict[str, Any]:
     candidate["score"] = max(score, 0)
     candidate["score_reasons"] = reasons
     candidate["research_status"] = "needs_research"
+    famous_reason = KNOWN_FAMOUS_CVES.get(str(candidate.get("cve_id") or "").upper())
+    if include_famous and famous_reason:
+        candidate["famous_sample"] = True
+        candidate["famous_reason"] = famous_reason
     return candidate
 
 
-def rank_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return sorted((rank_record(record) for record in records), key=lambda item: (-item["score"], item["cve_id"]))
+def rank_records(records: list[dict[str, Any]], *, include_famous: bool = False) -> list[dict[str, Any]]:
+    ranked = (
+        rank_record(record, include_famous=include_famous)
+        for record in records
+        if include_famous or str(record.get("cve_id") or "").upper() not in KNOWN_FAMOUS_CVES
+    )
+    return sorted(ranked, key=lambda item: (-item["score"], item["cve_id"]))

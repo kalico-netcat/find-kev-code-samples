@@ -11,7 +11,7 @@ class KevTests(unittest.TestCase):
 
         records = normalize_kev_feed(feed)
 
-        self.assertEqual(len(records), 3)
+        self.assertEqual(len(records), 4)
         self.assertEqual(records[0]["cve_id"], "CVE-2020-11023")
         self.assertEqual(records[0]["cwes"], ["CWE-79"])
         self.assertEqual(records[0]["source"]["catalog"], "CISA KEV")

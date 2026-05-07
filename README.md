@@ -13,6 +13,8 @@ bin/kev-collector validate
 
 All generated artifacts are local files under `data/`, `batches/`, and `samples/`.
 
+`rank` excludes known-famous KEV examples such as Log4Shell, Heartbleed, and Shellshock by default because they are poor benchmark candidates for this dataset. Use `bin/kev-collector rank --include-famous` when you explicitly want those CVEs in `data/candidates.jsonl`.
+
 ## Multi-Agent Workflow
 
 Use one orchestrator and many batch workers. The orchestrator owns repo state; each worker gets exactly one `batches/batch-NNNN.jsonl` file and returns findings JSONL only.
@@ -35,6 +37,8 @@ bin/kev-collector rank
 bin/kev-collector batch --size 20
 bin/kev-collector prompt-batch batches/batch-0001.jsonl --output prompts/batch-0001.md
 ```
+
+Use `bin/kev-collector rank --include-famous` before batching if the pass should include the curated famous-CVE exclusions.
 
 Assign each generated prompt to one worker agent. Save returned findings under `findings/` with matching names:
 
