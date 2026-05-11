@@ -6,6 +6,7 @@ __pycache__/
 data/
 batches/
 samples/
+anonymized-samples/
 findings/
 prompts/
 work/

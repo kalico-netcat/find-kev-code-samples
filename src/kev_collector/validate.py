@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .anonymize import validate_anonymized_output
 from .findings import normalize_finding
 from .io import read_jsonl
 from .samples import validate_sample_dir
@@ -29,6 +30,8 @@ def validate_workspace(root: Path) -> list[str]:
     if samples_root.exists():
         for metadata_path in sorted(samples_root.glob("**/metadata.json")):
             errors.extend(validate_sample_dir(metadata_path.parent))
+
+    errors.extend(validate_anonymized_output(root / "anonymized-samples"))
 
     return errors
 

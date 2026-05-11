@@ -4,6 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from .anonymize import anonymize_samples
 from .batches import write_batches
 from .findings import merge_findings
 from .io import read_json, read_jsonl, write_jsonl
@@ -91,6 +92,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sample_review_list.add_argument("--jsonl", action="store_true", help="emit JSONL records")
     sample_review_list.set_defaults(func=cmd_samples_review_list)
+
+    sample_anonymize = sample_subparsers.add_parser("anonymize", help="write anonymized benchmark-facing samples")
+    sample_anonymize.add_argument(
+        "--status",
+        default="accepted",
+        choices=["needs_review", "accepted", "rejected", "needs_more_evidence", "all"],
+        help="sample review status to anonymize",
+    )
+    sample_anonymize.add_argument("--output", type=Path, default=Path("anonymized-samples"))
+    sample_anonymize.add_argument("--force", action="store_true", help="overwrite existing anonymized samples")
+    sample_anonymize.add_argument("--dry-run", action="store_true", help="list planned anonymized samples without writing files")
+    sample_anonymize.set_defaults(func=cmd_samples_anonymize)
 
     new_sample = subparsers.add_parser("new-sample", help="scaffold a triage-ready sample directory")
     new_sample.add_argument("cve_id")
@@ -243,6 +256,25 @@ def cmd_samples_review_list(args: argparse.Namespace) -> int:
                 f"{record['cve_id']} {record['sample_id']} {record['status']} "
                 f"{record['evidence_level'] or '-'} {confidence} {record['review_path']}{marker}"
             )
+    return 0
+
+
+def cmd_samples_anonymize(args: argparse.Namespace) -> int:
+    results = anonymize_samples(
+        args.root,
+        status=args.status,
+        output_dir=args.output,
+        force=args.force,
+        dry_run=args.dry_run,
+    )
+    for item in results:
+        action = "would anonymize" if item["dry_run"] else "anonymized"
+        print(
+            f"{action} {item['sample_id']} [{item['language']}] "
+            f"symbols={item['symbols_renamed']} comments={item['comments_removed']} -> {item['destination']}"
+        )
+    if not results:
+        print("anonymized 0 sample(s)")
     return 0
 
 

@@ -105,3 +105,13 @@ bin/kev-collector samples review-list --jsonl
 ```
 
 The command defaults to `status: needs_review` and prints each sample's `review.md` path. It may print nothing until `samples import` has created sample folders.
+
+## Sample Anonymization
+
+Create deterministic benchmark-facing copies without changing canonical `samples/` artifacts:
+
+```sh
+bin/kev-collector samples anonymize --status accepted --output anonymized-samples
+```
+
+The anonymizer writes `sample-0001` style directories with public-safe metadata, paired vulnerable/fixed snippets, a transform summary, and a hashed mapping file. It strips comments and renames ordinary identifiers consistently across each vulnerable/fixed pair. Use `--dry-run` to preview work and `--force` to regenerate existing anonymized outputs.
