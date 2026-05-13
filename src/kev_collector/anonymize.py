@@ -12,7 +12,6 @@ from .io import read_json, write_json
 from .samples import normalize_extension, normalize_sample_kind
 
 TRANSFORM_VERSION = "generic-lexical-v1"
-DEFAULT_SHUFFLE_SEED = "kev-anonymized-item-pool-v1"
 IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 COMMIT_RE = re.compile(r"\b[0-9a-f]{7,40}\b", re.IGNORECASE)
 
@@ -397,12 +396,11 @@ def anonymize_samples(
     output_dir: Path = Path("anonymized-samples"),
     force: bool = False,
     dry_run: bool = False,
-    seed: str = DEFAULT_SHUFFLE_SEED,
 ) -> list[dict[str, Any]]:
     sample_dirs = sample_dirs_for_status(root, status)
     output_root = resolve(root, output_dir)
     existing_ids = existing_public_ids(output_root)
-    samples = build_anonymized_samples(sample_dirs, seed=seed, existing_ids=existing_ids)
+    samples = build_anonymized_samples(sample_dirs, existing_ids=existing_ids)
     results: list[dict[str, Any]] = []
     for sample in samples:
         result = anonymize_sample_dir(
@@ -523,14 +521,14 @@ def existing_public_ids(output_root: Path) -> dict[str, str]:
     return ids
 
 
-def build_anonymized_samples(sample_dirs: list[Path], seed: str, existing_ids: dict[str, str]) -> list[AnonymizedSample]:
+def build_anonymized_samples(sample_dirs: list[Path], existing_ids: dict[str, str]) -> list[AnonymizedSample]:
     samples: list[AnonymizedSample] = []
     for sample_dir in sample_dirs:
         metadata = read_json(sample_dir / "metadata.json")
         if not isinstance(metadata, dict):
             raise ValueError(f"{sample_dir / 'metadata.json'}: metadata must be an object")
         samples.append(build_sample_for_export(sample_dir, metadata, existing_ids))
-    return stable_shuffle_samples(samples, seed=seed)
+    return samples
 
 
 def build_sample_for_export(sample_dir: Path, metadata: dict[str, Any], existing_ids: dict[str, str]) -> AnonymizedSample:
@@ -567,14 +565,6 @@ def build_sample_for_export(sample_dir: Path, metadata: dict[str, Any], existing
         sample_dir=sample_dir,
         status=status,
     )
-
-
-def stable_shuffle_samples(samples: list[AnonymizedSample], seed: str) -> list[AnonymizedSample]:
-    def shuffle_key(sample: AnonymizedSample) -> str:
-        payload = f"{seed}\n{sample.source_fingerprint}".encode("utf-8")
-        return hashlib.sha256(payload).hexdigest()
-
-    return sorted(samples, key=shuffle_key)
 
 
 def public_sample_id(source_fingerprint: str) -> str:

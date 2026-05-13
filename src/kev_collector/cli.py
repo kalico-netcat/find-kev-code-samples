@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .anonymize import DEFAULT_SHUFFLE_SEED, anonymize_samples
+from .anonymize import anonymize_samples
 from .batches import write_batches
 from .findings import merge_findings
 from .io import read_json, read_jsonl, write_jsonl
@@ -123,7 +123,6 @@ def build_parser() -> argparse.ArgumentParser:
     sample_anonymize.add_argument("--output", type=Path, default=Path("anonymized-samples"))
     sample_anonymize.add_argument("--force", action="store_true", help="overwrite existing anonymized samples")
     sample_anonymize.add_argument("--dry-run", action="store_true", help="list planned anonymized samples without writing files")
-    sample_anonymize.add_argument("--seed", default=DEFAULT_SHUFFLE_SEED, help="stable shuffle seed for anonymized item order")
     sample_anonymize.set_defaults(func=cmd_samples_anonymize)
 
     new_sample = subparsers.add_parser("new-sample", help="scaffold a triage-ready sample directory")
@@ -296,7 +295,6 @@ def cmd_samples_anonymize(args: argparse.Namespace) -> int:
         output_dir=args.output,
         force=args.force,
         dry_run=args.dry_run,
-        seed=args.seed,
     )
     for item in results:
         if item.get("dry_run"):

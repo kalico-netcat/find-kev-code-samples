@@ -5,7 +5,7 @@ import json
 import tempfile
 import unittest
 
-from kev_collector.anonymize import DEFAULT_SHUFFLE_SEED, anonymize_code_pair, anonymize_samples, validate_anonymized_output
+from kev_collector.anonymize import anonymize_code_pair, anonymize_samples, validate_anonymized_output
 from kev_collector.cli import main
 from kev_collector.io import write_json
 
@@ -167,22 +167,18 @@ function checkUser(userInput) {
             for sample_dir in list_sample_dirs(root / "anonymized-samples"):
                 self.assertEqual(len(snippet_files_for_sample(sample_dir)), 2)
 
-    def test_shuffle_seed_is_stable_and_changes_order_without_changing_ids(self) -> None:
+    def test_anonymize_samples_uses_canonical_sample_order(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             write_sample(root, status="accepted")
             write_negative_sample(root, status="accepted")
 
-            first = anonymize_samples(root, dry_run=True, seed=DEFAULT_SHUFFLE_SEED)
-            second = anonymize_samples(root, dry_run=True, seed=DEFAULT_SHUFFLE_SEED)
-            third = anonymize_samples(root, dry_run=True, seed="different-seed")
+            results = anonymize_samples(root, dry_run=True)
 
-            first_order = [item["sample_id"] for item in first]
-            second_order = [item["sample_id"] for item in second]
-            third_order = [item["sample_id"] for item in third]
-            self.assertEqual(first_order, second_order)
-            self.assertNotEqual(first_order, third_order)
-            self.assertEqual(sorted(first_order), sorted(third_order))
+            self.assertEqual(
+                [item["sample_kind"] for item in results],
+                ["positive", "negative"],
+            )
 
 
 def write_sample(root: Path, status: str) -> None:
