@@ -10,6 +10,7 @@ from kev_collector.io import write_json, write_jsonl
 from kev_collector.cli import main
 from kev_collector.sample_pipeline import (
     build_sample_candidate,
+    generate_negative_samples,
     import_snippets,
     list_sample_reviews,
     list_sample_candidates,
@@ -229,6 +230,36 @@ class SamplePipelineTests(unittest.TestCase):
             review = (sample_dir / "review.md").read_text(encoding="utf-8")
             self.assertIn("Sample key:", review)
             self.assertIn("Reviewer Checklist", review)
+            metadata = json.loads((sample_dir / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["sample_kind"], "positive")
+
+    def test_generate_negative_sample_from_accepted_positive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_positive_sample(root, "CVE-2020-11023", "accepted", "accepted")
+
+            paths = generate_negative_samples(root)
+
+            self.assertEqual(len(paths), 1)
+            sample_dir = paths[0]
+            self.assertTrue((sample_dir / "metadata.json").exists())
+            self.assertTrue((sample_dir / "negative.js").exists())
+            metadata = json.loads((sample_dir / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["sample_kind"], "negative")
+            self.assertEqual(metadata["status"], "needs_review")
+            self.assertEqual(metadata["derived_from_sample_id"], "accepted")
+            self.assertEqual((sample_dir / "negative.js").read_text(encoding="utf-8"), "function safe() {\n  return true;\n}\n")
+
+    def test_generate_negative_skips_existing_derivation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_positive_sample(root, "CVE-2020-11023", "accepted", "accepted")
+
+            first = generate_negative_samples(root)
+            second = generate_negative_samples(root)
+
+            self.assertEqual(len(first), 1)
+            self.assertEqual(second, [])
 
     def test_review_list_defaults_to_needs_review(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -266,6 +297,17 @@ class SamplePipelineTests(unittest.TestCase):
             rows = [json.loads(line) for line in stdout.getvalue().splitlines()]
             self.assertEqual(rows[0]["cve_id"], "CVE-2020-11023")
             self.assertEqual(rows[0]["status"], "needs_review")
+
+    def test_review_list_includes_sample_kind(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_sample_metadata(root, "CVE-2020-11023", "needs", "needs_review")
+            write_sample_metadata(root, "CVE-2020-11023", "needs-negative", "needs_review", sample_kind="negative")
+
+            records = list_sample_reviews(root)
+
+            self.assertEqual(records[0]["sample_kind"], "positive")
+            self.assertEqual(records[1]["sample_kind"], "negative")
 
 
 def snippet_for(candidate: dict) -> dict:
@@ -327,8 +369,31 @@ def write_sample_metadata(
     sample_id: str,
     status: str,
     with_review: bool = True,
+    sample_kind: str = "positive",
 ) -> None:
     sample_dir = root / "samples" / cve_id / sample_id
+    metadata = {
+        "cve_id": cve_id,
+        "sample_id": sample_id,
+        "sample_key": f"{cve_id}|repo|commit|file",
+        "source_finding_key": f"{cve_id}|source|patch",
+        "status": status,
+        "confidence": 0.94,
+        "provenance": {"preferred_source": "official_patch"},
+    }
+    if sample_kind != "positive":
+        metadata["sample_kind"] = sample_kind
+        metadata["derived_from_sample_id"] = "source-positive"
+        metadata["derived_from_sample_key"] = f"{cve_id}|repo|commit|file"
+        metadata["negative_strategy"] = "fixed-lookalike-v1"
+    write_json(sample_dir / "metadata.json", metadata)
+    if with_review:
+        (sample_dir / "review.md").write_text("# Review\n", encoding="utf-8")
+
+
+def write_positive_sample(root: Path, cve_id: str, sample_id: str, status: str) -> None:
+    sample_dir = root / "samples" / cve_id / sample_id
+    sample_dir.mkdir(parents=True, exist_ok=True)
     write_json(
         sample_dir / "metadata.json",
         {
@@ -337,12 +402,21 @@ def write_sample_metadata(
             "sample_key": f"{cve_id}|repo|commit|file",
             "source_finding_key": f"{cve_id}|source|patch",
             "status": status,
+            "sample_kind": "positive",
+            "language": "javascript",
+            "source_urls": ["https://github.com/example/project/commit/deadbeef"],
+            "repo_urls": ["https://github.com/example/project"],
+            "patch_refs": ["deadbeef"],
+            "affected_files": ["src/app.js"],
+            "license": {"name": "MIT", "url": "", "notes": ""},
             "confidence": 0.94,
             "provenance": {"preferred_source": "official_patch"},
         },
     )
-    if with_review:
-        (sample_dir / "review.md").write_text("# Review\n", encoding="utf-8")
+    (sample_dir / "vulnerable.js").write_text("function safe() {\n  return userInput.replace(rx, 'x');\n}\n", encoding="utf-8")
+    (sample_dir / "fixed.js").write_text("function safe() {\n  return true;\n}\n", encoding="utf-8")
+    (sample_dir / "evidence.md").write_text("# Evidence\n", encoding="utf-8")
+    (sample_dir / "review.md").write_text("# Review\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

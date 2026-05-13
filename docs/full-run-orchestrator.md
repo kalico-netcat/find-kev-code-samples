@@ -79,6 +79,14 @@ Final samples should remain `status: needs_review`.
 
 Use `--force` only when intentionally rebuilding existing patch bundles or overwriting an existing imported sample with the same `sample_key`.
 
+Optional post-review benchmark prep happens later, after a human has accepted positive samples. At that point, negative benchmark samples can be generated with:
+
+```sh
+bin/kev-collector samples negatives generate
+```
+
+This step is outside the agentic collection flow and should not be run before positive samples are human-reviewed and accepted.
+
 ## Worker Boundaries
 
 Research workers:

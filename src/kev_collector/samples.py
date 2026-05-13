@@ -8,6 +8,9 @@ from .io import write_json
 
 CVE_PATTERN = re.compile(r"^CVE-\d{4}-\d{4,}$")
 SAMPLE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+ALLOWED_STATUSES = {"needs_review", "accepted", "rejected", "needs_more_evidence"}
+ALLOWED_SAMPLE_KINDS = {"positive", "negative"}
+NEGATIVE_STRATEGY = "fixed-lookalike-v1"
 
 
 def create_sample(root: Path, cve_id: str, sample_id: str, language: str = "txt") -> Path:
@@ -28,6 +31,7 @@ def create_sample(root: Path, cve_id: str, sample_id: str, language: str = "txt"
                 "cve_id": cve_id,
                 "sample_id": sample_id,
                 "status": "needs_review",
+                "sample_kind": "positive",
                 "language": language,
                 "source_urls": [],
                 "repo_urls": [],
@@ -98,28 +102,40 @@ def validate_sample_dir(sample_dir: Path) -> list[str]:
     cve_id = str(metadata.get("cve_id") or "")
     sample_id = str(metadata.get("sample_id") or "")
     status = str(metadata.get("status") or "")
+    sample_kind = normalize_sample_kind(metadata)
 
     if not CVE_PATTERN.match(cve_id):
         errors.append(f"{metadata_path}: invalid or missing cve_id")
     if not sample_id:
         errors.append(f"{metadata_path}: missing sample_id")
-    if status not in {"needs_review", "accepted", "rejected", "needs_more_evidence"}:
+    if status not in ALLOWED_STATUSES:
         errors.append(f"{metadata_path}: invalid status")
+    if sample_kind not in ALLOWED_SAMPLE_KINDS:
+        errors.append(f"{metadata_path}: invalid sample_kind")
+        return errors
 
-    vulnerable_files = sorted(sample_dir.glob("vulnerable.*"))
-    fixed_files = sorted(sample_dir.glob("fixed.*"))
-    if not vulnerable_files:
-        errors.append(f"{sample_dir}: missing vulnerable.* snippet")
-    if not fixed_files:
-        errors.append(f"{sample_dir}: missing fixed.* snippet")
+    if sample_kind == "positive":
+        vulnerable_files = sorted(sample_dir.glob("vulnerable.*"))
+        fixed_files = sorted(sample_dir.glob("fixed.*"))
+        if not vulnerable_files:
+            errors.append(f"{sample_dir}: missing vulnerable.* snippet")
+        if not fixed_files:
+            errors.append(f"{sample_dir}: missing fixed.* snippet")
 
-    if status == "accepted":
-        errors.extend(validate_accepted_sample(sample_dir, metadata, vulnerable_files, fixed_files, evidence_path))
+        if status == "accepted":
+            errors.extend(validate_accepted_positive_sample(sample_dir, metadata, vulnerable_files, fixed_files, evidence_path))
+    else:
+        negative_files = sorted(sample_dir.glob("negative.*"))
+        if not negative_files:
+            errors.append(f"{sample_dir}: missing negative.* snippet")
+        errors.extend(validate_negative_sample_metadata(metadata_path, metadata))
+        if status == "accepted":
+            errors.extend(validate_accepted_negative_sample(metadata_path, metadata, negative_files, evidence_path))
 
     return errors
 
 
-def validate_accepted_sample(
+def validate_accepted_positive_sample(
     sample_dir: Path,
     metadata: dict[str, Any],
     vulnerable_files: list[Path],
@@ -144,3 +160,48 @@ def validate_accepted_sample(
         errors.append(f"{evidence_path}: accepted sample missing evidence notes")
 
     return errors
+
+
+def validate_negative_sample_metadata(metadata_path: Path, metadata: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    required_fields = {
+        "derived_from_sample_id",
+        "derived_from_sample_key",
+        "negative_strategy",
+    }
+    missing = sorted(field for field in required_fields if not str(metadata.get(field) or "").strip())
+    if missing:
+        errors.append(f"{metadata_path}: negative sample missing fields: {', '.join(missing)}")
+    elif str(metadata.get("negative_strategy") or "") != NEGATIVE_STRATEGY:
+        errors.append(f"{metadata_path}: invalid negative_strategy")
+    return errors
+
+
+def validate_accepted_negative_sample(
+    metadata_path: Path,
+    metadata: dict[str, Any],
+    negative_files: list[Path],
+    evidence_path: Path,
+) -> list[str]:
+    errors: list[str] = []
+
+    if not metadata.get("source_urls"):
+        errors.append(f"{metadata_path}: accepted sample missing source_urls")
+
+    license_info = metadata.get("license")
+    if not isinstance(license_info, dict) or not (license_info.get("name") or license_info.get("url")):
+        errors.append(f"{metadata_path}: accepted sample missing license metadata")
+
+    for snippet in negative_files:
+        if not snippet.read_text(encoding="utf-8").strip():
+            errors.append(f"{snippet}: accepted sample snippet is empty")
+
+    if not evidence_path.exists() or not evidence_path.read_text(encoding="utf-8").strip():
+        errors.append(f"{evidence_path}: accepted sample missing evidence notes")
+
+    return errors
+
+
+def normalize_sample_kind(metadata: dict[str, Any]) -> str:
+    value = str(metadata.get("sample_kind") or "positive").strip().lower()
+    return value or "positive"

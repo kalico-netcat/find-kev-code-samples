@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .io import read_json, write_json
-from .samples import normalize_extension
+from .samples import normalize_extension, normalize_sample_kind
 
 TRANSFORM_VERSION = "generic-lexical-v1"
+DEFAULT_SHUFFLE_SEED = "kev-anonymized-item-pool-v1"
 IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 COMMIT_RE = re.compile(r"\b[0-9a-f]{7,40}\b", re.IGNORECASE)
 
@@ -368,20 +370,45 @@ class CodePair:
     fixed_code: str
 
 
+@dataclass(frozen=True)
+class NegativeCode:
+    extension: str
+    negative_path: Path
+    negative_code: str
+
+
+@dataclass(frozen=True)
+class AnonymizedItem:
+    source_fingerprint: str
+    item_fingerprint: str
+    public_id: str
+    source_sample_kind: str
+    item_kind: str
+    is_vulnerable: bool
+    language: str
+    extension: str
+    code: str
+    sample_dir: Path
+    status: str
+
+
 def anonymize_samples(
     root: Path,
     status: str = "accepted",
     output_dir: Path = Path("anonymized-samples"),
     force: bool = False,
     dry_run: bool = False,
+    seed: str = DEFAULT_SHUFFLE_SEED,
 ) -> list[dict[str, Any]]:
     sample_dirs = sample_dirs_for_status(root, status)
+    output_root = resolve(root, output_dir)
+    existing_ids = existing_public_ids(output_root)
+    items = build_anonymized_items(sample_dirs, seed=seed, existing_ids=existing_ids)
     results: list[dict[str, Any]] = []
-    for index, sample_dir in enumerate(sample_dirs, start=1):
-        result = anonymize_sample_dir(
-            sample_dir,
-            resolve(root, output_dir),
-            public_id=f"sample-{index:04d}",
+    for item in items:
+        result = anonymize_item(
+            item,
+            output_root,
             force=force,
             dry_run=dry_run,
         )
@@ -407,64 +434,176 @@ def sample_dirs_for_status(root: Path, status: str) -> list[Path]:
     return sample_dirs
 
 
-def anonymize_sample_dir(
-    sample_dir: Path,
+def anonymize_item(
+    item: AnonymizedItem,
     output_root: Path,
-    public_id: str,
     force: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    metadata = read_json(sample_dir / "metadata.json")
-    if not isinstance(metadata, dict):
-        raise ValueError(f"{sample_dir / 'metadata.json'}: metadata must be an object")
-
-    pair = read_code_pair(sample_dir, metadata)
-    transform = anonymize_code_pair(pair.vulnerable_code, pair.fixed_code, pair.extension)
-    destination = output_root / public_id
-    result = {
-        "sample_id": public_id,
-        "source_fingerprint": source_fingerprint(metadata, sample_dir),
-        "status": str(metadata.get("status") or ""),
-        "language": str(metadata.get("language") or pair.extension),
-        "destination": str(destination),
-        "symbols_renamed": len(transform["symbol_map"]),
-        "comments_removed": transform["comments_removed"],
-        "dry_run": dry_run,
-    }
+    destination = output_root / item.public_id
+    transform = anonymize_item_code(item.code, item.extension)
+    result = base_anonymize_result(item, destination, dry_run)
+    result["symbols_renamed"] = len(transform["symbol_map"])
+    result["comments_removed"] = transform["comments_removed"]
 
     if dry_run:
         return result
 
     if destination.exists() and not force:
+        existing_metadata = read_json(destination / "metadata.json") if (destination / "metadata.json").exists() else {}
+        if (
+            isinstance(existing_metadata, dict)
+            and str(existing_metadata.get("item_fingerprint") or "") == result["item_fingerprint"]
+        ):
+            result["action"] = "skipped_existing"
+            return result
         raise ValueError(f"{destination}: anonymized sample already exists; use --force to overwrite")
 
     destination.mkdir(parents=True, exist_ok=True)
+    snippet_name = f"{item.item_kind}.{item.extension}"
     public_metadata = {
-        "sample_id": public_id,
+        "sample_id": item.public_id,
+        "item_id": item.public_id,
         "status": result["status"],
-        "language": str(metadata.get("language") or pair.extension),
-        "source_fingerprint": result["source_fingerprint"],
+        "sample_kind": item.source_sample_kind,
+        "item_kind": item.item_kind,
+        "is_vulnerable": item.is_vulnerable,
+        "language": item.language,
+        "source_fingerprint": item.source_fingerprint,
+        "item_fingerprint": item.item_fingerprint,
         "transform_version": TRANSFORM_VERSION,
         "files": {
-            "vulnerable": f"vulnerable.{pair.extension}",
-            "fixed": f"fixed.{pair.extension}",
+            item.item_kind: snippet_name,
         },
     }
     write_json(destination / "metadata.json", public_metadata)
-    (destination / f"vulnerable.{pair.extension}").write_text(transform["vulnerable_code"], encoding="utf-8")
-    (destination / f"fixed.{pair.extension}").write_text(transform["fixed_code"], encoding="utf-8")
+    (destination / snippet_name).write_text(transform["code"], encoding="utf-8")
     write_json(
         destination / "mapping.json",
         {
             "transform_version": TRANSFORM_VERSION,
-            "source_fingerprint": result["source_fingerprint"],
+            "source_fingerprint": item.source_fingerprint,
+            "item_fingerprint": item.item_fingerprint,
             "symbol_count": len(transform["symbol_map"]),
             "symbol_hashes": hashed_symbol_map(transform["symbol_map"]),
             "comments_removed": transform["comments_removed"],
         },
     )
     (destination / "review.md").write_text(render_public_review(public_metadata, result), encoding="utf-8")
+    result["action"] = "anonymized"
     return result
+
+
+def base_anonymize_result(
+    item: AnonymizedItem,
+    destination: Path,
+    dry_run: bool,
+) -> dict[str, Any]:
+    return {
+        "sample_id": item.public_id,
+        "item_id": item.public_id,
+        "source_fingerprint": item.source_fingerprint,
+        "item_fingerprint": item.item_fingerprint,
+        "status": item.status,
+        "sample_kind": item.source_sample_kind,
+        "item_kind": item.item_kind,
+        "is_vulnerable": item.is_vulnerable,
+        "language": item.language,
+        "destination": str(destination),
+        "action": "planned" if dry_run else "",
+        "dry_run": dry_run,
+    }
+
+
+def existing_public_ids(output_root: Path) -> dict[str, str]:
+    ids: dict[str, str] = {}
+    if not output_root.exists():
+        return ids
+    for metadata_path in sorted(output_root.glob("*/metadata.json")):
+        metadata = read_json(metadata_path)
+        if not isinstance(metadata, dict):
+            continue
+        fingerprint = str(metadata.get("item_fingerprint") or "").strip()
+        sample_id = str(metadata.get("item_id") or metadata.get("sample_id") or metadata_path.parent.name).strip()
+        if fingerprint and sample_id:
+            ids[fingerprint] = sample_id
+    return ids
+
+
+def build_anonymized_items(sample_dirs: list[Path], seed: str, existing_ids: dict[str, str]) -> list[AnonymizedItem]:
+    items: list[AnonymizedItem] = []
+    for sample_dir in sample_dirs:
+        metadata = read_json(sample_dir / "metadata.json")
+        if not isinstance(metadata, dict):
+            raise ValueError(f"{sample_dir / 'metadata.json'}: metadata must be an object")
+        items.extend(build_items_for_sample(sample_dir, metadata, existing_ids))
+    return stable_shuffle_items(items, seed=seed)
+
+
+def build_items_for_sample(sample_dir: Path, metadata: dict[str, Any], existing_ids: dict[str, str]) -> list[AnonymizedItem]:
+    sample_kind = normalize_sample_kind(metadata)
+    sample_language = str(metadata.get("language") or "txt")
+    base_fingerprint = source_fingerprint(metadata, sample_dir)
+    status = str(metadata.get("status") or "")
+    items: list[AnonymizedItem] = []
+    if sample_kind == "negative":
+        negative = read_negative_code(sample_dir, metadata)
+        item_fingerprint = derive_item_fingerprint(base_fingerprint, "negative")
+        items.append(
+            AnonymizedItem(
+                source_fingerprint=base_fingerprint,
+                item_fingerprint=item_fingerprint,
+                public_id=existing_ids.get(item_fingerprint, public_item_id(item_fingerprint)),
+                source_sample_kind=sample_kind,
+                item_kind="negative",
+                is_vulnerable=False,
+                language=sample_language or negative.extension,
+                extension=negative.extension,
+                code=negative.negative_code,
+                sample_dir=sample_dir,
+                status=status,
+            )
+        )
+        return items
+
+    pair = read_code_pair(sample_dir, metadata)
+    for item_kind, code in (("vulnerable", pair.vulnerable_code), ("fixed", pair.fixed_code)):
+        item_fingerprint = derive_item_fingerprint(base_fingerprint, item_kind)
+        items.append(
+            AnonymizedItem(
+                source_fingerprint=base_fingerprint,
+                item_fingerprint=item_fingerprint,
+                public_id=existing_ids.get(item_fingerprint, public_item_id(item_fingerprint)),
+                source_sample_kind=sample_kind,
+                item_kind=item_kind,
+                is_vulnerable=item_kind == "vulnerable",
+                language=sample_language or pair.extension,
+                extension=pair.extension,
+                code=code,
+                sample_dir=sample_dir,
+                status=status,
+            )
+        )
+    return items
+
+
+def stable_shuffle_items(items: list[AnonymizedItem], seed: str) -> list[AnonymizedItem]:
+    def shuffle_key(item: AnonymizedItem) -> str:
+        payload = f"{seed}\n{item.item_fingerprint}".encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    return sorted(items, key=shuffle_key)
+
+
+def derive_item_fingerprint(source_fingerprint: str, item_kind: str) -> str:
+    payload = f"{source_fingerprint}\n{item_kind}".encode("utf-8")
+    digest = hashlib.sha256(payload).digest()
+    return f"sha256:{base64.urlsafe_b64encode(digest).decode('ascii').rstrip('=')}"
+
+
+def public_item_id(item_fingerprint: str) -> str:
+    token = item_fingerprint.removeprefix("sha256:").lower()
+    return f"item-{token[:20]}"
 
 
 def read_code_pair(sample_dir: Path, metadata: dict[str, Any]) -> CodePair:
@@ -489,6 +628,22 @@ def read_code_pair(sample_dir: Path, metadata: dict[str, Any]) -> CodePair:
     )
 
 
+def read_negative_code(sample_dir: Path, metadata: dict[str, Any]) -> NegativeCode:
+    negative_files = sorted(sample_dir.glob("negative.*"))
+    if not negative_files:
+        raise ValueError(f"{sample_dir}: missing negative.* snippet")
+
+    negative_path = negative_files[0]
+    extension = normalize_extension(str(metadata.get("language") or negative_path.suffix.lstrip(".") or "txt"))
+    if negative_path.suffix:
+        extension = negative_path.suffix.lstrip(".")
+    return NegativeCode(
+        extension=extension,
+        negative_path=negative_path,
+        negative_code=negative_path.read_text(encoding="utf-8"),
+    )
+
+
 def anonymize_code_pair(vulnerable_code: str, fixed_code: str, extension: str) -> dict[str, Any]:
     symbol_map: dict[str, str] = {}
     comments_removed = 0
@@ -499,6 +654,26 @@ def anonymize_code_pair(vulnerable_code: str, fixed_code: str, extension: str) -
     return {
         "vulnerable_code": vulnerable_output,
         "fixed_code": fixed_output,
+        "symbol_map": symbol_map,
+        "comments_removed": comments_removed,
+    }
+
+
+def anonymize_negative_code(negative_code: str, extension: str) -> dict[str, Any]:
+    symbol_map: dict[str, str] = {}
+    negative_output, comments_removed = transform_code(negative_code, extension, symbol_map)
+    return {
+        "negative_code": negative_output,
+        "symbol_map": symbol_map,
+        "comments_removed": comments_removed,
+    }
+
+
+def anonymize_item_code(code: str, extension: str) -> dict[str, Any]:
+    symbol_map: dict[str, str] = {}
+    output, comments_removed = transform_code(code, extension, symbol_map)
+    return {
+        "code": output,
         "symbol_map": symbol_map,
         "comments_removed": comments_removed,
     }
@@ -721,16 +896,21 @@ def hashed_symbol_map(symbol_map: dict[str, str]) -> dict[str, str]:
 
 
 def render_public_review(metadata: dict[str, Any], result: dict[str, Any]) -> str:
+    file_summary = f"{metadata.get('item_kind', 'snippet')} snippet"
     return f"""# {metadata['sample_id']}
 
 Status: {metadata['status']}
+Sample kind: {metadata.get('sample_kind', 'positive')}
+Item kind: {metadata.get('item_kind', '')}
+Label: {"vulnerable" if metadata.get("is_vulnerable") else "non-vulnerable"}
 Language: {metadata['language']}
 Transform: {metadata['transform_version']}
 Source fingerprint: `{metadata['source_fingerprint']}`
+Item fingerprint: `{metadata.get('item_fingerprint', '')}`
 
 ## Review Notes
 
-This is a generated anonymized copy of a canonical KEV sample. Public provenance has been replaced with a stable fingerprint, comments were removed, and ordinary identifiers were renamed consistently across the vulnerable and fixed snippets.
+This is a generated anonymized copy of a canonical KEV sample. Public provenance has been replaced with a stable fingerprint, comments were removed, and ordinary identifiers were renamed consistently across the exported {file_summary}.
 
 ## Transform Summary
 
@@ -744,6 +924,8 @@ def validate_anonymized_output(root: Path) -> list[str]:
     forbidden = [re.compile(r"CVE-\d{4}-\d{4,}"), re.compile(r"https?://"), COMMIT_RE]
     if not root.exists():
         return errors
+    for metadata_path in sorted(root.glob("*/metadata.json")):
+        errors.extend(validate_anonymized_dir(metadata_path.parent))
     for path in sorted(root.glob("**/*")):
         if not path.is_file():
             continue
@@ -751,6 +933,52 @@ def validate_anonymized_output(root: Path) -> list[str]:
         for pattern in forbidden:
             if pattern.search(text):
                 errors.append(f"{path}: contains public provenance marker matching {pattern.pattern}")
+    return errors
+
+
+def validate_anonymized_dir(item_dir: Path) -> list[str]:
+    metadata_path = item_dir / "metadata.json"
+    if not metadata_path.exists():
+        return []
+
+    try:
+        metadata = read_json(metadata_path)
+    except json.JSONDecodeError as exc:
+        return [f"{metadata_path}: invalid JSON: {exc}"]
+    if not isinstance(metadata, dict):
+        return [f"{metadata_path}: metadata must be an object"]
+
+    item_fingerprint = str(metadata.get("item_fingerprint") or "").strip()
+    if not item_fingerprint:
+        return []
+
+    errors: list[str] = []
+    item_kind = str(metadata.get("item_kind") or "").strip()
+    if item_kind not in {"vulnerable", "fixed", "negative"}:
+        errors.append(f"{metadata_path}: invalid item_kind")
+
+    files = metadata.get("files")
+    if not isinstance(files, dict) or len(files) != 1:
+        errors.append(f"{metadata_path}: anonymized item must declare exactly one snippet file")
+        return errors
+
+    declared_kind, declared_name = next(iter(files.items()))
+    if declared_kind != item_kind:
+        errors.append(f"{metadata_path}: files entry must match item_kind")
+    snippet_path = item_dir / str(declared_name)
+    if not snippet_path.exists():
+        errors.append(f"{snippet_path}: missing anonymized snippet")
+
+    snippet_files = [
+        path
+        for path in item_dir.iterdir()
+        if path.is_file() and path.name not in {"metadata.json", "mapping.json", "review.md"}
+    ]
+    if len(snippet_files) != 1:
+        errors.append(f"{item_dir}: anonymized item must contain exactly one snippet file")
+
+    if "is_vulnerable" not in metadata:
+        errors.append(f"{metadata_path}: missing is_vulnerable")
     return errors
 
 

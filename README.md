@@ -106,6 +106,14 @@ bin/kev-collector samples review-list --jsonl
 
 The command defaults to `status: needs_review` and prints each sample's `review.md` path. It may print nothing until `samples import` has created sample folders.
 
+Accepted positive samples can also produce derived negative benchmark samples:
+
+```sh
+bin/kev-collector samples negatives generate
+```
+
+This command scans accepted positive samples, copies the accepted `fixed.*` snippet into a review-ready `negative.*` sample, and records derivation metadata such as `sample_kind`, `derived_from_sample_id`, and `negative_strategy`. Generated negatives start in `status: needs_review` and show up in `samples review-list` with `sample_kind: negative`.
+
 ## Sample Anonymization
 
 Create deterministic benchmark-facing copies without changing canonical `samples/` artifacts:
@@ -114,4 +122,4 @@ Create deterministic benchmark-facing copies without changing canonical `samples
 bin/kev-collector samples anonymize --status accepted --output anonymized-samples
 ```
 
-The anonymizer writes `sample-0001` style directories with public-safe metadata, paired vulnerable/fixed snippets, a transform summary, and a hashed mapping file. It strips comments and renames ordinary identifiers consistently across each vulnerable/fixed pair. Use `--dry-run` to preview work and `--force` to regenerate existing anonymized outputs.
+The anonymizer writes one directory per anonymized benchmark item with public-safe metadata, one transformed snippet file, a transform summary, and a hashed mapping file. Accepted positive samples export two standalone items, one `vulnerable.*` and one `fixed.*`; accepted negative samples export one standalone `negative.*` item. The whole pool is shuffled together with a stable default seed, and you can override it with `--seed`. Use `--dry-run` to preview work and `--force` to regenerate existing anonymized outputs.

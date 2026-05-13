@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from .findings import normalize_finding
 from .git_source import GitBundleResult, prepare_git_source_bundle
 from .io import read_json, read_jsonl, write_json
-from .samples import normalize_extension
+from .samples import NEGATIVE_STRATEGY, normalize_extension, normalize_sample_kind
 
 COMMIT_RE = re.compile(r"\b[0-9a-f]{7,40}\b", re.IGNORECASE)
 SLUG_RE = re.compile(r"[^a-z0-9_.-]+")
@@ -157,6 +157,7 @@ def import_snippets(root: Path, snippet_paths: list[Path], force: bool = False) 
             "sample_key": sample_key,
             "source_finding_key": snippet["source_finding_key"],
             "status": "needs_review",
+            "sample_kind": "positive",
             "language": language,
             "source_urls": snippet.get("source_urls", []),
             "repo_urls": snippet.get("repo_urls", []),
@@ -208,6 +209,7 @@ def list_sample_reviews(root: Path, status: str = "needs_review") -> list[dict[s
                 "cve_id": str(metadata.get("cve_id") or ""),
                 "sample_id": str(metadata.get("sample_id") or ""),
                 "status": sample_status,
+                "sample_kind": normalize_sample_kind(metadata),
                 "evidence_level": str(provenance.get("preferred_source") or metadata.get("evidence_level") or ""),
                 "confidence": metadata.get("confidence", ""),
                 "review_path": str(review_path),
@@ -215,6 +217,118 @@ def list_sample_reviews(root: Path, status: str = "needs_review") -> list[dict[s
             }
         )
     return records
+
+
+def generate_negative_samples(root: Path, source_status: str = "accepted", force: bool = False) -> list[Path]:
+    if source_status != "accepted":
+        raise ValueError("negative generation only supports source_status='accepted'")
+
+    source_samples = list_negative_source_samples(root, source_status)
+    existing_negative_keys = scan_existing_negative_derivations(root)
+    generated: list[Path] = []
+    for sample_dir, metadata in source_samples:
+        derived_key = derived_negative_sample_key(metadata)
+        if derived_key in existing_negative_keys and not force:
+            continue
+
+        negative_dir = write_negative_sample(root, sample_dir, metadata, force=force)
+        generated.append(negative_dir)
+        existing_negative_keys.add(derived_key)
+    return generated
+
+
+def list_negative_source_samples(root: Path, source_status: str = "accepted") -> list[tuple[Path, dict[str, Any]]]:
+    samples_root = root / "samples"
+    if not samples_root.exists():
+        return []
+
+    records: list[tuple[Path, dict[str, Any]]] = []
+    for metadata_path in sorted(samples_root.glob("**/metadata.json")):
+        metadata = read_json(metadata_path)
+        if not isinstance(metadata, dict):
+            continue
+        if str(metadata.get("status") or "") != source_status:
+            continue
+        if normalize_sample_kind(metadata) != "positive":
+            continue
+        records.append((metadata_path.parent, metadata))
+    return records
+
+
+def scan_existing_negative_derivations(root: Path) -> set[str]:
+    keys: set[str] = set()
+    samples_root = root / "samples"
+    if not samples_root.exists():
+        return keys
+
+    for metadata_path in samples_root.glob("**/metadata.json"):
+        metadata = read_json(metadata_path)
+        if not isinstance(metadata, dict):
+            continue
+        if normalize_sample_kind(metadata) != "negative":
+            continue
+        derived_key = str(metadata.get("derived_from_sample_key") or "").strip()
+        strategy = str(metadata.get("negative_strategy") or "").strip()
+        if derived_key and strategy:
+            keys.add(f"{derived_key}|negative|{strategy}")
+    return keys
+
+
+def write_negative_sample(root: Path, source_dir: Path, metadata: dict[str, Any], force: bool = False) -> Path:
+    cve_id = str(metadata.get("cve_id") or "")
+    source_sample_id = str(metadata.get("sample_id") or "")
+    source_sample_key = str(metadata.get("sample_key") or "")
+    sample_id = derive_negative_sample_id(source_sample_id)
+    sample_key = derived_negative_sample_key(metadata)
+    language = str(metadata.get("language") or "txt")
+    extension = normalize_extension(language)
+    fixed_files = sorted(source_dir.glob("fixed.*"))
+    if not fixed_files:
+        raise ValueError(f"{source_dir}: missing fixed.* snippet for negative generation")
+    fixed_path = fixed_files[0]
+    if fixed_path.suffix:
+        extension = fixed_path.suffix.lstrip(".")
+
+    negative_dir = root / "samples" / cve_id / sample_id
+    metadata_path = negative_dir / "metadata.json"
+    if metadata_path.exists() and not force:
+        raise ValueError(f"{metadata_path}: negative sample already exists; use --force to overwrite")
+
+    negative_dir.mkdir(parents=True, exist_ok=True)
+    negative_code = fixed_path.read_text(encoding="utf-8")
+    negative_metadata = {
+        "cve_id": cve_id,
+        "sample_id": sample_id,
+        "sample_key": sample_key,
+        "source_finding_key": metadata.get("source_finding_key", ""),
+        "status": "needs_review",
+        "sample_kind": "negative",
+        "language": language,
+        "source_urls": metadata.get("source_urls", []),
+        "repo_urls": metadata.get("repo_urls", []),
+        "patch_refs": metadata.get("patch_refs", []),
+        "affected_files": metadata.get("affected_files", []),
+        "license": metadata.get("license", {"name": "", "url": "", "notes": ""}),
+        "provenance": metadata.get("provenance", {"preferred_source": "", "extraction_notes": ""}),
+        "confidence": metadata.get("confidence", ""),
+        "derived_from_sample_id": source_sample_id,
+        "derived_from_sample_key": source_sample_key,
+        "negative_strategy": NEGATIVE_STRATEGY,
+    }
+    write_json(metadata_path, negative_metadata)
+    (negative_dir / f"negative.{extension}").write_text(negative_code, encoding="utf-8")
+    (negative_dir / "evidence.md").write_text(render_negative_evidence(metadata, sample_id), encoding="utf-8")
+    (negative_dir / "review.md").write_text(render_negative_review(metadata, sample_id, sample_key), encoding="utf-8")
+    return negative_dir
+
+
+def derive_negative_sample_id(sample_id: str) -> str:
+    base = sample_id[:87].rstrip("-")
+    return f"{base}-negative"
+
+
+def derived_negative_sample_key(metadata: dict[str, Any]) -> str:
+    return f"{metadata.get('sample_key', '')}|negative|{NEGATIVE_STRATEGY}"
 
 
 def write_patch_bundle(
@@ -571,6 +685,66 @@ Fixed range: {format_range(snippet.get('fixed_range'))}
 - [ ] Vulnerable snippet contains the risky logic
 - [ ] Fixed snippet shows the remediation
 - [ ] Snippet is minimal but understandable
+- [ ] License/provenance are acceptable
+"""
+
+
+def render_negative_evidence(metadata: dict[str, Any], sample_id: str) -> str:
+    source_urls = "\n".join(f"- {url}" for url in metadata.get("source_urls", [])) or "- TODO"
+    patch_refs = "\n".join(f"- {ref}" for ref in metadata.get("patch_refs", [])) or "- TODO"
+    return f"""# Evidence for {metadata.get('cve_id', '')} / {sample_id}
+
+## Source Links
+
+{source_urls}
+
+## Patch References
+
+{patch_refs}
+
+## Rationale
+
+Derived benchmark negative from the accepted fixed snippet of `{metadata.get('sample_id', '')}` using `{NEGATIVE_STRATEGY}`. This artifact is intended to preserve code style and local context while remaining non-vulnerable.
+"""
+
+
+def render_negative_review(metadata: dict[str, Any], sample_id: str, sample_key: str) -> str:
+    return f"""# {metadata.get('cve_id', '')} / {sample_id}
+
+Sample key: `{sample_key}`
+Derived from sample: `{metadata.get('sample_id', '')}`
+Derived from key: `{metadata.get('sample_key', '')}`
+Status: needs_review
+Sample kind: negative
+Strategy: {NEGATIVE_STRATEGY}
+Evidence level: {metadata.get('provenance', {}).get('preferred_source', '') if isinstance(metadata.get('provenance'), dict) else ''}
+Confidence: {metadata.get('confidence', '')}
+License: {metadata.get('license', {}).get('name', '') if isinstance(metadata.get('license'), dict) else ''}
+
+## Source
+
+- Repo: {', '.join(metadata.get('repo_urls', []))}
+- Source URLs: {', '.join(metadata.get('source_urls', []))}
+- Patch refs: {', '.join(metadata.get('patch_refs', []))}
+
+## Negative Snippet
+
+File: `negative.{normalize_extension(str(metadata.get('language') or 'txt'))}`
+
+## Why This Snippet
+
+This sample is derived from the accepted fixed snippet so it stays structurally similar to a real KEV example while representing a non-vulnerable response.
+
+## Reviewer Notes
+
+Confirm the snippet is still understandable in isolation, remains non-vulnerable, and is distinct enough to serve as a negative benchmark example.
+
+## Reviewer Checklist
+
+- [ ] Source positive sample is accepted and credible
+- [ ] Negative snippet is non-vulnerable
+- [ ] Negative remains structurally similar to the accepted sample
+- [ ] Derivation metadata is complete
 - [ ] License/provenance are acceptable
 """
 

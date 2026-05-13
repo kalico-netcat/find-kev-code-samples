@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .anonymize import anonymize_samples
+from .anonymize import DEFAULT_SHUFFLE_SEED, anonymize_samples
 from .batches import write_batches
 from .findings import merge_findings
 from .io import read_json, read_jsonl, write_jsonl
@@ -12,6 +12,7 @@ from .kev import DEFAULT_KEV_URL, fetch_kev_json, normalize_kev_feed
 from .prompts import render_batch_prompt
 from .rank import rank_records
 from .sample_pipeline import (
+    generate_negative_samples,
     import_snippets,
     list_sample_candidates,
     list_sample_reviews,
@@ -84,6 +85,25 @@ def build_parser() -> argparse.ArgumentParser:
     sample_import.add_argument("--force", action="store_true", help="overwrite an existing sample with the same key")
     sample_import.set_defaults(func=cmd_samples_import)
 
+    sample_negatives = sample_subparsers.add_parser("negatives", help="generate derived negative samples")
+    sample_negatives_subparsers = sample_negatives.add_subparsers(dest="samples_negatives_command", required=True)
+    sample_negatives_generate = sample_negatives_subparsers.add_parser(
+        "generate",
+        help="create review-ready negative samples from accepted positives",
+    )
+    sample_negatives_generate.add_argument(
+        "--source-status",
+        default="accepted",
+        choices=["accepted"],
+        help="review status required on source positive samples",
+    )
+    sample_negatives_generate.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite an existing generated negative sample with the same derived key",
+    )
+    sample_negatives_generate.set_defaults(func=cmd_samples_negatives_generate)
+
     sample_review_list = sample_subparsers.add_parser("review-list", help="list samples awaiting human review")
     sample_review_list.add_argument(
         "--status",
@@ -103,6 +123,7 @@ def build_parser() -> argparse.ArgumentParser:
     sample_anonymize.add_argument("--output", type=Path, default=Path("anonymized-samples"))
     sample_anonymize.add_argument("--force", action="store_true", help="overwrite existing anonymized samples")
     sample_anonymize.add_argument("--dry-run", action="store_true", help="list planned anonymized samples without writing files")
+    sample_anonymize.add_argument("--seed", default=DEFAULT_SHUFFLE_SEED, help="stable shuffle seed for anonymized item order")
     sample_anonymize.set_defaults(func=cmd_samples_anonymize)
 
     new_sample = subparsers.add_parser("new-sample", help="scaffold a triage-ready sample directory")
@@ -253,9 +274,18 @@ def cmd_samples_review_list(args: argparse.Namespace) -> int:
             confidence = record["confidence"] if record["confidence"] != "" else "-"
             marker = " MISSING_REVIEW" if record["missing_review"] else ""
             print(
-                f"{record['cve_id']} {record['sample_id']} {record['status']} "
+                f"{record['cve_id']} {record['sample_id']} {record['sample_kind']} {record['status']} "
                 f"{record['evidence_level'] or '-'} {confidence} {record['review_path']}{marker}"
             )
+    return 0
+
+
+def cmd_samples_negatives_generate(args: argparse.Namespace) -> int:
+    paths = generate_negative_samples(args.root, source_status=args.source_status, force=args.force)
+    for path in paths:
+        print(f"generated negative {path}")
+    if not paths:
+        print("generated 0 negative sample(s)")
     return 0
 
 
@@ -266,11 +296,17 @@ def cmd_samples_anonymize(args: argparse.Namespace) -> int:
         output_dir=args.output,
         force=args.force,
         dry_run=args.dry_run,
+        seed=args.seed,
     )
     for item in results:
-        action = "would anonymize" if item["dry_run"] else "anonymized"
+        if item.get("dry_run"):
+            action = "would anonymize"
+        elif item.get("action") == "skipped_existing":
+            action = "already anonymized"
+        else:
+            action = "anonymized"
         print(
-            f"{action} {item['sample_id']} [{item['language']}] "
+            f"{action} {item['item_id']} {item['item_kind']} [{item['language']}] "
             f"symbols={item['symbols_renamed']} comments={item['comments_removed']} -> {item['destination']}"
         )
     if not results:
