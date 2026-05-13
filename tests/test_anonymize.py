@@ -51,26 +51,26 @@ function checkUser(userInput) {
 
             results = anonymize_samples(root)
 
-            self.assertEqual(len(results), 2)
-            item_dirs = list_item_dirs(root / "anonymized-samples")
-            self.assertEqual(len(item_dirs), 2)
-            item_kinds = sorted(read_public_metadata(path)["item_kind"] for path in item_dirs)
-            self.assertEqual(item_kinds, ["fixed", "vulnerable"])
-            for item_dir in item_dirs:
-                metadata = read_public_metadata(item_dir)
+            self.assertEqual(len(results), 1)
+            sample_dirs = list_sample_dirs(root / "anonymized-samples")
+            self.assertEqual(len(sample_dirs), 1)
+            for sample_dir in sample_dirs:
+                metadata = read_public_metadata(sample_dir)
                 self.assertEqual(metadata["status"], "accepted")
                 self.assertEqual(metadata["sample_kind"], "positive")
-                self.assertIn(metadata["item_kind"], {"vulnerable", "fixed"})
+                self.assertTrue(metadata["is_vulnerable"])
                 self.assertNotIn("cve_id", metadata)
                 self.assertNotIn("source_urls", metadata)
                 self.assertNotIn("source_status", metadata)
-                snippet_files = snippet_files_for_item(item_dir)
-                self.assertEqual(len(snippet_files), 1)
+                snippet_files = snippet_files_for_sample(sample_dir)
+                self.assertEqual(len(snippet_files), 2)
+                self.assertTrue((sample_dir / "vulnerable.js").exists())
+                self.assertTrue((sample_dir / "fixed.js").exists())
 
             combined = "\n".join(
                 path.read_text(encoding="utf-8")
-                for item_dir in item_dirs
-                for path in item_dir.iterdir()
+                for sample_dir in sample_dirs
+                for path in sample_dir.iterdir()
                 if path.is_file()
             )
             self.assertNotIn("CVE-2020-11023", combined)
@@ -85,7 +85,7 @@ function checkUser(userInput) {
 
             results = anonymize_samples(root, dry_run=True)
 
-            self.assertEqual(len(results), 2)
+            self.assertEqual(len(results), 1)
             self.assertFalse((root / "anonymized-samples").exists())
 
     def test_rerun_skips_existing_output_without_force(self) -> None:
@@ -95,14 +95,14 @@ function checkUser(userInput) {
             first = anonymize_samples(root)
             second = anonymize_samples(root)
 
-            self.assertEqual(len(first), 2)
-            self.assertEqual(len(second), 2)
+            self.assertEqual(len(first), 1)
+            self.assertEqual(len(second), 1)
             self.assertTrue(all(item["action"] == "skipped_existing" for item in second))
 
             results = anonymize_samples(root, force=True)
-            self.assertEqual(len(results), 2)
+            self.assertEqual(len(results), 1)
 
-    def test_rerun_adds_new_negative_item_without_colliding_with_positive_items(self) -> None:
+    def test_rerun_adds_new_negative_sample_without_colliding_with_positive_samples(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             write_sample(root, status="accepted")
@@ -111,10 +111,12 @@ function checkUser(userInput) {
 
             results = anonymize_samples(root)
 
-            self.assertEqual(len(results), 3)
-            negative = [item for item in results if item["item_kind"] == "negative"][0]
+            self.assertEqual(len(results), 2)
+            negative = [item for item in results if item["sample_kind"] == "negative"][0]
             self.assertEqual(negative["action"], "anonymized")
-            self.assertTrue((Path(negative["destination"]) / "negative.js").exists())
+            negative_dir = Path(negative["destination"])
+            self.assertTrue((negative_dir / "vulnerable.js").exists())
+            self.assertTrue((negative_dir / "fixed.js").exists())
 
     def test_cli_samples_anonymize(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -128,9 +130,8 @@ function checkUser(userInput) {
             self.assertEqual(exit_code, 0)
             output = stdout.getvalue()
             self.assertIn("anonymized", output)
-            self.assertIn("vulnerable", output)
-            self.assertIn("fixed", output)
-            self.assertEqual(len(list_item_dirs(root / "anonymized-samples")), 2)
+            self.assertIn("positive", output)
+            self.assertEqual(len(list_sample_dirs(root / "anonymized-samples")), 1)
 
     def test_anonymize_samples_writes_negative_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -140,15 +141,19 @@ function checkUser(userInput) {
             results = anonymize_samples(root)
 
             self.assertEqual(len(results), 1)
-            output = list_item_dirs(root / "anonymized-samples")[0]
+            output = list_sample_dirs(root / "anonymized-samples")[0]
             metadata = read_public_metadata(output)
             self.assertEqual(metadata["sample_kind"], "negative")
-            self.assertEqual(metadata["item_kind"], "negative")
             self.assertFalse(metadata["is_vulnerable"])
-            self.assertTrue((output / "negative.js").exists())
+            self.assertTrue((output / "vulnerable.js").exists())
+            self.assertTrue((output / "fixed.js").exists())
+            self.assertEqual(
+                (output / "vulnerable.js").read_text(encoding="utf-8"),
+                (output / "fixed.js").read_text(encoding="utf-8"),
+            )
             self.assertEqual(validate_anonymized_output(root / "anonymized-samples"), [])
 
-    def test_mixed_pool_contains_all_three_item_kinds(self) -> None:
+    def test_mixed_pool_contains_positive_and_negative_sample_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             write_sample(root, status="accepted")
@@ -156,11 +161,11 @@ function checkUser(userInput) {
 
             results = anonymize_samples(root)
 
-            self.assertEqual(len(results), 3)
-            item_kinds = sorted(item["item_kind"] for item in results)
-            self.assertEqual(item_kinds, ["fixed", "negative", "vulnerable"])
-            for item_dir in list_item_dirs(root / "anonymized-samples"):
-                self.assertEqual(len(snippet_files_for_item(item_dir)), 1)
+            self.assertEqual(len(results), 2)
+            sample_kinds = sorted(item["sample_kind"] for item in results)
+            self.assertEqual(sample_kinds, ["negative", "positive"])
+            for sample_dir in list_sample_dirs(root / "anonymized-samples"):
+                self.assertEqual(len(snippet_files_for_sample(sample_dir)), 2)
 
     def test_shuffle_seed_is_stable_and_changes_order_without_changing_ids(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -172,9 +177,9 @@ function checkUser(userInput) {
             second = anonymize_samples(root, dry_run=True, seed=DEFAULT_SHUFFLE_SEED)
             third = anonymize_samples(root, dry_run=True, seed="different-seed")
 
-            first_order = [item["item_id"] for item in first]
-            second_order = [item["item_id"] for item in second]
-            third_order = [item["item_id"] for item in third]
+            first_order = [item["sample_id"] for item in first]
+            second_order = [item["sample_id"] for item in second]
+            third_order = [item["sample_id"] for item in third]
             self.assertEqual(first_order, second_order)
             self.assertNotEqual(first_order, third_order)
             self.assertEqual(sorted(first_order), sorted(third_order))
@@ -260,7 +265,7 @@ function htmlPrefilter(userInput) {
     )
 
 
-def list_item_dirs(root: Path) -> list[Path]:
+def list_sample_dirs(root: Path) -> list[Path]:
     if not root.exists():
         return []
     return sorted(path for path in root.iterdir() if path.is_dir())
@@ -270,7 +275,7 @@ def read_public_metadata(item_dir: Path) -> dict:
     return json.loads((item_dir / "metadata.json").read_text(encoding="utf-8"))
 
 
-def snippet_files_for_item(item_dir: Path) -> list[Path]:
+def snippet_files_for_sample(item_dir: Path) -> list[Path]:
     return sorted(
         path
         for path in item_dir.iterdir()

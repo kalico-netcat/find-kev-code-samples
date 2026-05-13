@@ -306,7 +306,7 @@ def cmd_samples_anonymize(args: argparse.Namespace) -> int:
         else:
             action = "anonymized"
         print(
-            f"{action} {item['item_id']} {item['item_kind']} [{item['language']}] "
+            f"{action} {item['sample_id']} {item['sample_kind']} [{item['language']}] "
             f"symbols={item['symbols_renamed']} comments={item['comments_removed']} -> {item['destination']}"
         )
     if not results:
