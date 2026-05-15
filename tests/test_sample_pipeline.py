@@ -140,6 +140,9 @@ class SamplePipelineTests(unittest.TestCase):
             prompt = Path(prepared[0]["prompt_path"]).read_text(encoding="utf-8")
             self.assertIn("Prepared Source Context", prompt)
             self.assertIn("vulnerable_path", prompt)
+            self.assertIn("identify the bug from the snippet itself", prompt)
+            self.assertIn("expand to the smallest enclosing function", prompt)
+            self.assertIn("hidden framework, kernel, or product context", prompt)
 
     def test_prepare_records_fetch_errors_and_keeps_partial_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

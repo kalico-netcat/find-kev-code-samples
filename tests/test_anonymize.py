@@ -11,29 +11,42 @@ from kev_collector.io import write_json
 
 
 class AnonymizeTests(unittest.TestCase):
-    def test_anonymize_code_pair_renames_symbols_consistently_and_strips_comments(self) -> None:
-        vulnerable = """// CVE note from upstream
+    def test_anonymize_code_pair_preserves_readable_code_while_redacting_provenance(self) -> None:
+        vulnerable = """// CVE-2020-11023 note from https://github.com/jquery/jquery
 function checkUser(userInput) {
   const cleaned = sanitize(userInput);
   return cleaned.replace(rxhtmlTag, '<$1></$2>');
 }
 """
-        fixed = """// fixed upstream behavior
+        fixed = """// fixed upstream behavior from 1d61fd9407e6fbe82fe55cb0b938307aa0791f77
 function checkUser(userInput) {
   const cleaned = sanitize(userInput);
   return cleaned;
 }
 """
 
-        result = anonymize_code_pair(vulnerable, fixed, "js")
+        result = anonymize_code_pair(
+            vulnerable,
+            fixed,
+            "js",
+            {
+                "sample_id": "jquery-jquery-1d61fd9407e6-manipulation",
+                "sample_key": (
+                    "CVE-2020-11023|https://github.com/jquery/jquery|"
+                    "1d61fd9407e6fbe82fe55cb0b938307aa0791f77|src/manipulation.js"
+                ),
+                "repo_urls": ["https://github.com/jquery/jquery"],
+            },
+        )
 
-        self.assertNotIn("checkUser", result["vulnerable_code"])
-        self.assertNotIn("userInput", result["fixed_code"])
-        self.assertNotIn("CVE note", result["vulnerable_code"])
-        self.assertEqual(result["symbol_map"]["checkUser"], "sym_0001")
-        self.assertEqual(result["symbol_map"]["userInput"], "sym_0002")
-        self.assertIn("function sym_0001(sym_0002)", result["vulnerable_code"])
-        self.assertIn("function sym_0001(sym_0002)", result["fixed_code"])
+        self.assertIn("function checkUser(userInput)", result["vulnerable_code"])
+        self.assertIn("const cleaned = sanitize(userInput);", result["fixed_code"])
+        self.assertIn("// CVE_REDACTED note from URL_REDACTED", result["vulnerable_code"])
+        self.assertIn("// fixed upstream behavior from COMMIT_REDACTED", result["fixed_code"])
+        self.assertNotIn("CVE-2020-11023", result["vulnerable_code"])
+        self.assertNotIn("https://github.com/jquery/jquery", result["vulnerable_code"])
+        self.assertNotIn("1d61fd9407e6fbe82fe55cb0b938307aa0791f77", result["fixed_code"])
+        self.assertGreaterEqual(result["provenance_redactions"], 3)
 
     def test_anonymize_preserves_javascript_regex_literals(self) -> None:
         vulnerable = "function parse(value) {\n  return /https?:\\/\\/example\\/path/.test(value);\n}\n"
@@ -43,6 +56,38 @@ function checkUser(userInput) {
 
         self.assertIn("/https?:\\/\\/example\\/path/", result["vulnerable_code"])
         self.assertIn("/https?:\\/\\/example\\/safe/", result["fixed_code"])
+
+    def test_anonymize_redacts_metadata_derived_advisories_projects_and_paths(self) -> None:
+        vulnerable = """// GHSA-abcd-1234-wxyz in jquery src/manipulation.js
+const note = "jquery before src/manipulation.js";
+"""
+        fixed = """// GHSA-abcd-1234-wxyz fixed in jquery
+const note = "safe";
+"""
+
+        result = anonymize_code_pair(
+            vulnerable,
+            fixed,
+            "js",
+            {
+                "sample_id": "jquery-jquery-1d61fd9407e6-manipulation",
+                "sample_key": (
+                    "CVE-2020-11023|https://github.com/jquery/jquery|"
+                    "1d61fd9407e6fbe82fe55cb0b938307aa0791f77|src/manipulation.js"
+                ),
+                "source_urls": ["https://github.com/jquery/jquery/security/advisories/GHSA-abcd-1234-wxyz"],
+                "repo_urls": ["https://github.com/jquery/jquery"],
+                "patch_refs": ["GHSA-abcd-1234-wxyz"],
+            },
+        )
+
+        combined = result["vulnerable_code"] + result["fixed_code"]
+        self.assertIn("ADVISORY_REDACTED", combined)
+        self.assertIn("PROJECT_REDACTED", combined)
+        self.assertIn("PATH_REDACTED", combined)
+        self.assertNotIn("GHSA-abcd-1234-wxyz", combined)
+        self.assertNotIn("jquery", combined.lower())
+        self.assertNotIn("src/manipulation.js", combined)
 
     def test_anonymize_samples_writes_public_safe_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

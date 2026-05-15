@@ -7,356 +7,31 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from .io import read_json, write_json
 from .samples import normalize_extension, normalize_sample_kind
 
-TRANSFORM_VERSION = "generic-lexical-v1"
-IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
+TRANSFORM_VERSION = "provenance-redaction-v1"
+CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,}\b", re.IGNORECASE)
+URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
 COMMIT_RE = re.compile(r"\b[0-9a-f]{7,40}\b", re.IGNORECASE)
-
-KEYWORDS_BY_EXTENSION = {
-    "c": {
-        "auto",
-        "break",
-        "case",
-        "char",
-        "const",
-        "continue",
-        "default",
-        "do",
-        "double",
-        "else",
-        "enum",
-        "extern",
-        "float",
-        "for",
-        "goto",
-        "if",
-        "inline",
-        "int",
-        "long",
-        "register",
-        "restrict",
-        "return",
-        "short",
-        "signed",
-        "sizeof",
-        "static",
-        "struct",
-        "switch",
-        "typedef",
-        "union",
-        "unsigned",
-        "void",
-        "volatile",
-        "while",
-    },
-    "cpp": {
-        "alignas",
-        "alignof",
-        "and",
-        "asm",
-        "auto",
-        "bool",
-        "break",
-        "case",
-        "catch",
-        "char",
-        "class",
-        "const",
-        "constexpr",
-        "continue",
-        "decltype",
-        "default",
-        "delete",
-        "do",
-        "double",
-        "else",
-        "enum",
-        "explicit",
-        "extern",
-        "false",
-        "float",
-        "for",
-        "friend",
-        "goto",
-        "if",
-        "inline",
-        "int",
-        "long",
-        "namespace",
-        "new",
-        "noexcept",
-        "nullptr",
-        "operator",
-        "private",
-        "protected",
-        "public",
-        "return",
-        "short",
-        "signed",
-        "sizeof",
-        "static",
-        "struct",
-        "switch",
-        "template",
-        "this",
-        "throw",
-        "true",
-        "try",
-        "typedef",
-        "typename",
-        "union",
-        "unsigned",
-        "using",
-        "virtual",
-        "void",
-        "volatile",
-        "while",
-    },
-    "java": {
-        "abstract",
-        "assert",
-        "boolean",
-        "break",
-        "byte",
-        "case",
-        "catch",
-        "char",
-        "class",
-        "const",
-        "continue",
-        "default",
-        "do",
-        "double",
-        "else",
-        "enum",
-        "extends",
-        "final",
-        "finally",
-        "float",
-        "for",
-        "if",
-        "implements",
-        "import",
-        "instanceof",
-        "int",
-        "interface",
-        "long",
-        "native",
-        "new",
-        "null",
-        "package",
-        "private",
-        "protected",
-        "public",
-        "return",
-        "short",
-        "static",
-        "strictfp",
-        "super",
-        "switch",
-        "synchronized",
-        "this",
-        "throw",
-        "throws",
-        "transient",
-        "true",
-        "try",
-        "void",
-        "volatile",
-        "while",
-    },
-    "js": {
-        "await",
-        "break",
-        "case",
-        "catch",
-        "class",
-        "const",
-        "continue",
-        "debugger",
-        "default",
-        "delete",
-        "do",
-        "else",
-        "export",
-        "extends",
-        "false",
-        "finally",
-        "for",
-        "function",
-        "if",
-        "import",
-        "in",
-        "instanceof",
-        "let",
-        "new",
-        "null",
-        "of",
-        "return",
-        "static",
-        "super",
-        "switch",
-        "this",
-        "throw",
-        "true",
-        "try",
-        "typeof",
-        "undefined",
-        "var",
-        "void",
-        "while",
-        "with",
-        "yield",
-    },
-    "php": {
-        "abstract",
-        "and",
-        "array",
-        "as",
-        "break",
-        "callable",
-        "case",
-        "catch",
-        "class",
-        "clone",
-        "const",
-        "continue",
-        "declare",
-        "default",
-        "die",
-        "do",
-        "echo",
-        "else",
-        "elseif",
-        "empty",
-        "enddeclare",
-        "endfor",
-        "endforeach",
-        "endif",
-        "endswitch",
-        "endwhile",
-        "eval",
-        "exit",
-        "extends",
-        "false",
-        "final",
-        "finally",
-        "fn",
-        "for",
-        "foreach",
-        "function",
-        "global",
-        "if",
-        "implements",
-        "include",
-        "include_once",
-        "instanceof",
-        "insteadof",
-        "interface",
-        "isset",
-        "list",
-        "namespace",
-        "new",
-        "null",
-        "or",
-        "print",
-        "private",
-        "protected",
-        "public",
-        "require",
-        "require_once",
-        "return",
-        "static",
-        "switch",
-        "throw",
-        "trait",
-        "true",
-        "try",
-        "unset",
-        "use",
-        "var",
-        "while",
-        "xor",
-        "yield",
-    },
-    "py": {
-        "and",
-        "as",
-        "assert",
-        "async",
-        "await",
-        "break",
-        "class",
-        "continue",
-        "def",
-        "del",
-        "elif",
-        "else",
-        "except",
-        "false",
-        "finally",
-        "for",
-        "from",
-        "global",
-        "if",
-        "import",
-        "in",
-        "is",
-        "lambda",
-        "none",
-        "nonlocal",
-        "not",
-        "or",
-        "pass",
-        "raise",
-        "return",
-        "true",
-        "try",
-        "while",
-        "with",
-        "yield",
-    },
-    "rb": {
-        "alias",
-        "and",
-        "begin",
-        "break",
-        "case",
-        "class",
-        "def",
-        "defined",
-        "do",
-        "else",
-        "elsif",
-        "end",
-        "ensure",
-        "false",
-        "for",
-        "if",
-        "in",
-        "module",
-        "next",
-        "nil",
-        "not",
-        "or",
-        "redo",
-        "rescue",
-        "retry",
-        "return",
-        "self",
-        "super",
-        "then",
-        "true",
-        "undef",
-        "unless",
-        "until",
-        "when",
-        "while",
-        "yield",
-    },
+ADVISORY_RE = re.compile(r"\b(?:GHSA-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}|[A-Z]+-\d{4}-\d{3,})\b")
+TOKEN_SPLIT_RE = re.compile(r"[^A-Za-z0-9_]+")
+COMMON_PROVENANCE_TOKENS = {
+    "advisories",
+    "commit",
+    "commits",
+    "fixed",
+    "github",
+    "https",
+    "http",
+    "lookalike",
+    "negative",
+    "security",
+    "source",
+    "src",
+    "vulnerable",
 }
 
 
@@ -388,6 +63,7 @@ class AnonymizedSample:
     fixed_code: str
     sample_dir: Path
     status: str
+    metadata: dict[str, Any]
 
 
 def anonymize_samples(
@@ -438,10 +114,10 @@ def anonymize_sample_dir(
     dry_run: bool = False,
 ) -> dict[str, Any]:
     destination = output_root / sample.public_id
-    transform = anonymize_code_pair(sample.vulnerable_code, sample.fixed_code, sample.extension)
+    transform = anonymize_code_pair(sample.vulnerable_code, sample.fixed_code, sample.extension, sample.metadata)
     result = base_anonymize_result(sample, destination, dry_run)
-    result["symbols_renamed"] = len(transform["symbol_map"])
-    result["comments_removed"] = transform["comments_removed"]
+    result["provenance_redactions"] = transform["provenance_redactions"]
+    result["redaction_counts"] = transform["redaction_counts"]
 
     if dry_run:
         return result
@@ -478,9 +154,8 @@ def anonymize_sample_dir(
         {
             "transform_version": TRANSFORM_VERSION,
             "source_fingerprint": sample.source_fingerprint,
-            "symbol_count": len(transform["symbol_map"]),
-            "symbol_hashes": hashed_symbol_map(transform["symbol_map"]),
-            "comments_removed": transform["comments_removed"],
+            "provenance_redactions": transform["provenance_redactions"],
+            "redaction_counts": transform["redaction_counts"],
         },
     )
     (destination / "review.md").write_text(render_public_review(public_metadata, result), encoding="utf-8")
@@ -549,8 +224,8 @@ def build_sample_for_export(sample_dir: Path, metadata: dict[str, Any], existing
             fixed_code=negative.negative_code,
             sample_dir=sample_dir,
             status=status,
+            metadata=metadata,
         )
-        
 
     pair = read_code_pair(sample_dir, metadata)
     return AnonymizedSample(
@@ -564,6 +239,7 @@ def build_sample_for_export(sample_dir: Path, metadata: dict[str, Any], existing
         fixed_code=pair.fixed_code,
         sample_dir=sample_dir,
         status=status,
+        metadata=metadata,
     )
 
 
@@ -610,226 +286,122 @@ def read_negative_code(sample_dir: Path, metadata: dict[str, Any]) -> NegativeCo
     )
 
 
-def anonymize_code_pair(vulnerable_code: str, fixed_code: str, extension: str) -> dict[str, Any]:
-    symbol_map: dict[str, str] = {}
-    comments_removed = 0
-    vulnerable_output, removed = transform_code(vulnerable_code, extension, symbol_map)
-    comments_removed += removed
-    fixed_output, removed = transform_code(fixed_code, extension, symbol_map)
-    comments_removed += removed
+def anonymize_code_pair(
+    vulnerable_code: str,
+    fixed_code: str,
+    extension: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    rules = provenance_redaction_rules(metadata or {})
+    vulnerable_output, vulnerable_counts = redact_provenance(vulnerable_code, rules)
+    fixed_output, fixed_counts = redact_provenance(fixed_code, rules)
+    redaction_counts = merge_redaction_counts(vulnerable_counts, fixed_counts)
     return {
         "vulnerable_code": vulnerable_output,
         "fixed_code": fixed_output,
-        "symbol_map": symbol_map,
-        "comments_removed": comments_removed,
+        "redaction_counts": redaction_counts,
+        "provenance_redactions": sum(redaction_counts.values()),
     }
 
 
-def anonymize_negative_code(negative_code: str, extension: str) -> dict[str, Any]:
-    symbol_map: dict[str, str] = {}
-    negative_output, comments_removed = transform_code(negative_code, extension, symbol_map)
+def anonymize_negative_code(
+    negative_code: str,
+    extension: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    rules = provenance_redaction_rules(metadata or {})
+    negative_output, redaction_counts = redact_provenance(negative_code, rules)
     return {
         "negative_code": negative_output,
-        "symbol_map": symbol_map,
-        "comments_removed": comments_removed,
+        "redaction_counts": redaction_counts,
+        "provenance_redactions": sum(redaction_counts.values()),
     }
 
 
-def transform_code(code: str, extension: str, symbol_map: dict[str, str]) -> tuple[str, int]:
-    spans = split_code_spans(code, extension)
-    output: list[str] = []
-    comments_removed = 0
-    for kind, text in spans:
-        if kind == "code":
-            output.append(rename_identifiers(text, extension, symbol_map))
-        elif kind == "comment":
-            comments_removed += 1
-            if "\n" in text:
-                output.append("\n" * text.count("\n"))
-        else:
-            output.append(text)
-    return "".join(output), comments_removed
+def provenance_redaction_rules(metadata: dict[str, Any]) -> list[tuple[str, re.Pattern[str], str]]:
+    rules: list[tuple[str, re.Pattern[str], str]] = [
+        ("url", URL_RE, "URL_REDACTED"),
+        ("cve", CVE_RE, "CVE_REDACTED"),
+        ("advisory", ADVISORY_RE, "ADVISORY_REDACTED"),
+        ("commit", COMMIT_RE, "COMMIT_REDACTED"),
+    ]
+    for path_fragment in sorted(source_path_fragments(metadata), key=len, reverse=True):
+        rules.append(("path", re.compile(re.escape(path_fragment), re.IGNORECASE), "PATH_REDACTED"))
+    for token in sorted(project_tokens(metadata), key=len, reverse=True):
+        rules.append(("project", re.compile(rf"\b{re.escape(token)}\b", re.IGNORECASE), "PROJECT_REDACTED"))
+    return rules
 
 
-def split_code_spans(code: str, extension: str) -> list[tuple[str, str]]:
-    spans: list[tuple[str, str]] = []
-    index = 0
-    start = 0
-    while index < len(code):
-        if code[index] == "/" and extension in {"js", "ts"} and is_regex_literal_start(code, index):
-            append_code_span(spans, code[start:index])
-            stop = consume_regex_literal(code, index)
-            spans.append(("string", code[index:stop]))
-            index = stop
-            start = index
-            continue
-        if code.startswith("/*", index):
-            append_code_span(spans, code[start:index])
-            end = code.find("*/", index + 2)
-            stop = len(code) if end == -1 else end + 2
-            spans.append(("comment", code[index:stop]))
-            index = stop
-            start = index
-            continue
-        if code.startswith("//", index) and extension not in {"py", "rb"}:
-            append_code_span(spans, code[start:index])
-            stop = find_line_end(code, index)
-            spans.append(("comment", code[index:stop]))
-            index = stop
-            start = index
-            continue
-        if code[index] == "#" and extension in {"py", "rb", "sh"}:
-            append_code_span(spans, code[start:index])
-            stop = find_line_end(code, index)
-            spans.append(("comment", code[index:stop]))
-            index = stop
-            start = index
-            continue
-        if code[index] in {"'", '"', "`"}:
-            append_code_span(spans, code[start:index])
-            quote = code[index]
-            stop = consume_string(code, index, quote)
-            spans.append(("string", code[index:stop]))
-            index = stop
-            start = index
-            continue
-        index += 1
-
-    append_code_span(spans, code[start:])
-    return spans
+def redact_provenance(code: str, rules: list[tuple[str, re.Pattern[str], str]]) -> tuple[str, dict[str, int]]:
+    counts: dict[str, int] = {}
+    redacted = code
+    for category, pattern, replacement in rules:
+        redacted, count = pattern.subn(replacement, redacted)
+        if count:
+            counts[category] = counts.get(category, 0) + count
+    return redacted, counts
 
 
-def append_code_span(spans: list[tuple[str, str]], text: str) -> None:
-    if text:
-        spans.append(("code", text))
+def merge_redaction_counts(*counts: dict[str, int]) -> dict[str, int]:
+    merged: dict[str, int] = {}
+    for count_by_category in counts:
+        for category, count in count_by_category.items():
+            merged[category] = merged.get(category, 0) + count
+    return merged
 
 
-def find_line_end(code: str, index: int) -> int:
-    end = code.find("\n", index)
-    return len(code) if end == -1 else end
+def source_path_fragments(metadata: dict[str, Any]) -> set[str]:
+    fragments: set[str] = set()
+    for value in metadata_values(metadata, "sample_key", "derived_from_sample_key"):
+        for part in str(value).split("|"):
+            part = part.strip()
+            if "/" in part and "." in part and not part.lower().startswith(("http://", "https://")):
+                fragments.add(part)
+    return fragments
 
 
-def consume_string(code: str, index: int, quote: str) -> int:
-    cursor = index + 1
-    while cursor < len(code):
-        if code[cursor] == "\\":
-            cursor += 2
-            continue
-        if code[cursor] == quote:
-            return cursor + 1
-        cursor += 1
-    return len(code)
+def project_tokens(metadata: dict[str, Any]) -> set[str]:
+    tokens: set[str] = set()
+    for value in metadata_values(metadata, "repo_urls", "source_urls"):
+        parsed = urlparse(str(value))
+        path_parts = [part for part in parsed.path.split("/") if part]
+        for part in path_parts[:2]:
+            tokens.update(split_project_token(part))
+
+    for value in metadata_values(metadata, "sample_key", "sample_id", "derived_from_sample_key", "derived_from_sample_id"):
+        for token in split_project_token(str(value)):
+            tokens.add(token)
+
+    return {token for token in tokens if should_redact_project_token(token)}
 
 
-def is_regex_literal_start(code: str, index: int) -> bool:
-    if code.startswith("//", index) or code.startswith("/*", index):
+def metadata_values(metadata: dict[str, Any], *keys: str) -> list[str]:
+    values: list[str] = []
+    for key in keys:
+        value = metadata.get(key)
+        if isinstance(value, list):
+            values.extend(str(item) for item in value)
+        elif value:
+            values.append(str(value))
+    return values
+
+
+def split_project_token(value: str) -> set[str]:
+    return {token.lower() for token in TOKEN_SPLIT_RE.split(value) if token}
+
+
+def should_redact_project_token(token: str) -> bool:
+    if len(token) < 4:
         return False
-    before = previous_nonspace(code, index)
-    return before in {"", "(", "=", ":", ",", "[", "{", ";", "!", "?", "&", "|"} or previous_word(code, index) in {
-        "return",
-        "case",
-        "throw",
-        "typeof",
-        "delete",
-        "void",
-    }
-
-
-def previous_word(code: str, index: int) -> str:
-    cursor = index - 1
-    while cursor >= 0 and code[cursor].isspace():
-        cursor -= 1
-    end = cursor + 1
-    while cursor >= 0 and (code[cursor].isalnum() or code[cursor] == "_"):
-        cursor -= 1
-    return code[cursor + 1 : end]
-
-
-def consume_regex_literal(code: str, index: int) -> int:
-    cursor = index + 1
-    in_class = False
-    while cursor < len(code):
-        char = code[cursor]
-        if char == "\\":
-            cursor += 2
-            continue
-        if char == "[":
-            in_class = True
-        elif char == "]":
-            in_class = False
-        elif char == "/" and not in_class:
-            cursor += 1
-            while cursor < len(code) and code[cursor].isalpha():
-                cursor += 1
-            return cursor
-        elif char == "\n":
-            return cursor
-        cursor += 1
-    return len(code)
-
-
-def rename_identifiers(text: str, extension: str, symbol_map: dict[str, str]) -> str:
-    def replace(match: re.Match[str]) -> str:
-        identifier = match.group(0)
-        if not should_rename_identifier(text, match.start(), match.end(), identifier, extension):
-            return identifier
-        if identifier not in symbol_map:
-            symbol_map[identifier] = f"sym_{len(symbol_map) + 1:04d}"
-        return symbol_map[identifier]
-
-    return IDENTIFIER_RE.sub(replace, text)
-
-
-def should_rename_identifier(text: str, start: int, end: int, identifier: str, extension: str) -> bool:
-    if len(identifier) <= 1:
+    if token in COMMON_PROVENANCE_TOKENS:
         return False
-    if identifier.lower() in keywords_for_extension(extension):
+    if CVE_RE.fullmatch(token):
         return False
-    if identifier.startswith("__") and identifier.endswith("__"):
+    if COMMIT_RE.fullmatch(token):
         return False
-    if identifier.isupper():
-        return False
-
-    before = previous_nonspace(text, start)
-    after = next_nonspace(text, end)
-    if before in {".", ":"}:
-        return False
-    if before == ">" and previous_nonspace(text, start, skip=1) == "-":
-        return False
-    if extension == "php" and before != "$" and after not in {"(", ":"}:
+    if token.isdigit():
         return False
     return True
-
-
-def keywords_for_extension(extension: str) -> set[str]:
-    extension = extension.lower().lstrip(".")
-    return KEYWORDS_BY_EXTENSION.get(extension, set()) | KEYWORDS_BY_EXTENSION.get("js", set())
-
-
-def previous_nonspace(text: str, index: int, skip: int = 0) -> str:
-    cursor = index - 1
-    skipped = 0
-    while cursor >= 0:
-        char = text[cursor]
-        if char.isspace():
-            cursor -= 1
-            continue
-        if skipped < skip:
-            skipped += 1
-            cursor -= 1
-            continue
-        return char
-    return ""
-
-
-def next_nonspace(text: str, index: int) -> str:
-    cursor = index
-    while cursor < len(text):
-        char = text[cursor]
-        if not char.isspace():
-            return char
-        cursor += 1
-    return ""
 
 
 def source_fingerprint(metadata: dict[str, Any], sample_dir: Path) -> str:
@@ -841,14 +413,6 @@ def source_fingerprint(metadata: dict[str, Any], sample_dir: Path) -> str:
     ]
     digest = hashlib.sha256("\n".join(pieces).encode("utf-8")).digest()
     return f"sha256:{base64.urlsafe_b64encode(digest).decode('ascii').rstrip('=')}"
-
-
-def hashed_symbol_map(symbol_map: dict[str, str]) -> dict[str, str]:
-    hashed: dict[str, str] = {}
-    for original, anonymized in sorted(symbol_map.items(), key=lambda item: item[1]):
-        digest = hashlib.sha256(original.encode("utf-8")).digest()
-        hashed[f"sha256:{base64.urlsafe_b64encode(digest).decode('ascii').rstrip('=')}"] = anonymized
-    return hashed
 
 
 def render_public_review(metadata: dict[str, Any], result: dict[str, Any]) -> str:
@@ -864,18 +428,18 @@ Source fingerprint: `{metadata['source_fingerprint']}`
 
 ## Review Notes
 
-This is a generated anonymized copy of a canonical KEV sample. Public provenance has been replaced with a stable fingerprint, comments were removed, and ordinary identifiers were renamed consistently across the exported {file_summary}.
+This is a generated anonymized copy of a canonical KEV sample. Public provenance has been replaced with stable placeholders while comments, ordinary identifiers, formatting, and code structure were preserved across the exported {file_summary}.
 
 ## Transform Summary
 
-- Symbols renamed: {result['symbols_renamed']}
-- Comments removed: {result['comments_removed']}
+- Provenance redactions: {result['provenance_redactions']}
+- Redaction counts: {json.dumps(result['redaction_counts'], sort_keys=True)}
 """
 
 
 def validate_anonymized_output(root: Path) -> list[str]:
     errors: list[str] = []
-    forbidden = [re.compile(r"CVE-\d{4}-\d{4,}"), re.compile(r"https?://"), COMMIT_RE]
+    forbidden = [CVE_RE, re.compile(r"https?://", re.IGNORECASE), COMMIT_RE, ADVISORY_RE]
     if not root.exists():
         return errors
     for metadata_path in sorted(root.glob("*/metadata.json")):

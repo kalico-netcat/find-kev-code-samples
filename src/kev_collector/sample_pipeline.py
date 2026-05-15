@@ -556,8 +556,8 @@ def render_snippet_prompt(
         "fixed_range": {"start": 1, "end": 1},
         "vulnerable_code": "...",
         "fixed_code": "...",
-        "rationale": "Why this is the minimal useful snippet.",
-        "uncertainty": "Any ambiguity or review concern.",
+        "rationale": "Why this is the smallest snippet that still contains enough context to identify the bug.",
+        "uncertainty": "Any ambiguity, missing context, or review concern.",
         "review_notes": "Notes for human reviewer.",
     }
     finding_json = json.dumps(candidate["finding"], indent=2, sort_keys=True)
@@ -568,7 +568,7 @@ def render_snippet_prompt(
 
 You are a snippet-selection worker for the KEV code sample collector.
 
-Use the prepared patch bundle at `{bundle_dir}`. Choose the smallest vulnerable/fixed code snippets that are still understandable for human secure-code review.
+Use the prepared patch bundle at `{bundle_dir}`. Choose vulnerable/fixed code snippets that are as small as possible while still containing enough local code to identify the vulnerability and the fix.
 
 Return JSON only. Do not write files.
 
@@ -589,7 +589,10 @@ Use `vulnerable_path`, `fixed_path`, `patch_path`, and `candidate_hunks_path` wh
 ## Selection Rules
 
 - Prefer the file path already identified by the finding when it contains the vulnerable logic.
-- Include enough surrounding context for a reviewer to understand why the vulnerable code is risky.
+- Include enough surrounding context for a reviewer to identify the bug from the snippet itself: the risky source or state, the guard/validation/permission/lifetime check, the sink or security-sensitive operation, and the fixed behavior.
+- If the changed hunk alone does not make the bug identifiable, expand to the smallest enclosing function, helper pair, call path, or adjacent type/constant definitions needed to make the vulnerability clear.
+- Prefer a larger coherent snippet over a tiny diff that requires hidden framework, kernel, or product context to determine whether the code is vulnerable.
+- If the vulnerability still cannot be determined from code in the prepared bundle, say so in `uncertainty` and `review_notes` instead of overclaiming.
 - Do not include unrelated refactors, test-only changes, or broad whole-file excerpts unless unavoidable.
 - Use the prepared vulnerable/fixed files as the source of truth when available.
 
