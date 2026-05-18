@@ -104,6 +104,9 @@ const note = "safe";
                 self.assertEqual(metadata["status"], "accepted")
                 self.assertEqual(metadata["sample_kind"], "positive")
                 self.assertTrue(metadata["is_vulnerable"])
+                self.assertTrue(metadata["expected_responses"]["vulnerable"]["is_vulnerable"])
+                self.assertFalse(metadata["expected_responses"]["fixed"]["is_vulnerable"])
+                self.assertIn("PROJECT_REDACTED", metadata["expected_responses"]["vulnerable"]["code_evidence"])
                 self.assertNotIn("cve_id", metadata)
                 self.assertNotIn("source_urls", metadata)
                 self.assertNotIn("source_status", metadata)
@@ -190,6 +193,9 @@ const note = "safe";
             metadata = read_public_metadata(output)
             self.assertEqual(metadata["sample_kind"], "negative")
             self.assertFalse(metadata["is_vulnerable"])
+            self.assertFalse(metadata["expected_responses"]["vulnerable"]["is_vulnerable"])
+            self.assertFalse(metadata["expected_responses"]["fixed"]["is_vulnerable"])
+            self.assertEqual(metadata["expected_responses"]["vulnerable"]["label"], "non_vulnerable")
             self.assertTrue((output / "vulnerable.js").exists())
             self.assertTrue((output / "fixed.js").exists())
             self.assertEqual(
@@ -245,6 +251,24 @@ def write_sample(root: Path, status: str) -> None:
             "source_urls": ["https://github.com/jquery/jquery/commit/1d61fd9407e6fbe82fe55cb0b938307aa0791f77"],
             "repo_urls": ["https://github.com/jquery/jquery"],
             "patch_refs": ["1d61fd9407e6fbe82fe55cb0b938307aa0791f77"],
+            "expected_responses": {
+                "vulnerable": {
+                    "file": "vulnerable.js",
+                    "is_vulnerable": True,
+                    "label": "vulnerable",
+                    "vulnerability_type": "cross-site scripting",
+                    "expected_behavior": "The jquery htmlPrefilter rewrite is vulnerable.",
+                    "code_evidence": "jquery htmlPrefilter calls replace on attacker-controlled HTML.",
+                },
+                "fixed": {
+                    "file": "fixed.js",
+                    "is_vulnerable": False,
+                    "label": "fixed",
+                    "vulnerability_type": "cross-site scripting",
+                    "expected_behavior": "The fixed jquery htmlPrefilter returns input without the rewrite.",
+                    "code_evidence": "jquery htmlPrefilter returns the value directly.",
+                },
+            },
         },
     )
     (sample_dir / "vulnerable.js").write_text(
@@ -293,6 +317,17 @@ def write_negative_sample(root: Path, status: str) -> None:
                 "1d61fd9407e6fbe82fe55cb0b938307aa0791f77|src/manipulation.js"
             ),
             "negative_strategy": "fixed-lookalike-v1",
+            "expected_responses": {
+                "negative": {
+                    "file": "negative.js",
+                    "is_vulnerable": False,
+                    "label": "non_vulnerable",
+                    "vulnerability_type": "cross-site scripting",
+                    "expected_behavior": "The jquery htmlPrefilter rewrite is absent.",
+                    "code_evidence": "jquery htmlPrefilter returns the value directly.",
+                    "negative_strategy": "fixed-lookalike-v1",
+                },
+            },
         },
     )
     (sample_dir / "negative.js").write_text(

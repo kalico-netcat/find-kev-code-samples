@@ -235,6 +235,12 @@ class SamplePipelineTests(unittest.TestCase):
             self.assertIn("Reviewer Checklist", review)
             metadata = json.loads((sample_dir / "metadata.json").read_text(encoding="utf-8"))
             self.assertEqual(metadata["sample_kind"], "positive")
+            self.assertEqual(metadata["expected_responses"]["vulnerable"]["label"], "vulnerable")
+            self.assertTrue(metadata["expected_responses"]["vulnerable"]["is_vulnerable"])
+            self.assertEqual(metadata["expected_responses"]["vulnerable"]["vulnerability_type"], "cross-site scripting")
+            self.assertIn("htmlPrefilter", metadata["expected_responses"]["vulnerable"]["code_evidence"])
+            self.assertEqual(metadata["expected_responses"]["fixed"]["label"], "fixed")
+            self.assertFalse(metadata["expected_responses"]["fixed"]["is_vulnerable"])
 
     def test_generate_negative_sample_from_accepted_positive(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -251,6 +257,8 @@ class SamplePipelineTests(unittest.TestCase):
             self.assertEqual(metadata["sample_kind"], "negative")
             self.assertEqual(metadata["status"], "needs_review")
             self.assertEqual(metadata["derived_from_sample_id"], "accepted")
+            self.assertEqual(metadata["expected_responses"]["negative"]["label"], "non_vulnerable")
+            self.assertFalse(metadata["expected_responses"]["negative"]["is_vulnerable"])
             self.assertEqual((sample_dir / "negative.js").read_text(encoding="utf-8"), "function safe() {\n  return true;\n}\n")
 
     def test_generate_negative_skips_existing_derivation(self) -> None:
@@ -327,6 +335,10 @@ def snippet_for(candidate: dict) -> dict:
         "vulnerable_code": "htmlPrefilter: function( html ) {\n  return html.replace( rxhtmlTag, '<$1></$2>' );\n}",
         "fixed_code": "htmlPrefilter: function( html ) {\n  return html;\n}",
         "rationale": "Smallest changed function that shows the sanitizer behavior.",
+        "vulnerability_type": "cross-site scripting",
+        "vulnerable_behavior": "htmlPrefilter rewrites attacker-controlled HTML in a way that can enable XSS.",
+        "fixed_behavior": "htmlPrefilter returns the HTML unchanged, removing the vulnerable rewrite.",
+        "code_evidence": "The htmlPrefilter function calls replace with rxhtmlTag on input HTML.",
         "uncertainty": "",
         "review_notes": "Review against upstream commit.",
         "source_urls": finding["source_urls"],
@@ -414,6 +426,24 @@ def write_positive_sample(root: Path, cve_id: str, sample_id: str, status: str) 
             "license": {"name": "MIT", "url": "", "notes": ""},
             "confidence": 0.94,
             "provenance": {"preferred_source": "official_patch"},
+            "expected_responses": {
+                "vulnerable": {
+                    "file": "vulnerable.js",
+                    "is_vulnerable": True,
+                    "label": "vulnerable",
+                    "vulnerability_type": "fixture bug",
+                    "expected_behavior": "unsafe fixture behavior",
+                    "code_evidence": "unsafe fixture behavior",
+                },
+                "fixed": {
+                    "file": "fixed.js",
+                    "is_vulnerable": False,
+                    "label": "fixed",
+                    "vulnerability_type": "fixture bug",
+                    "expected_behavior": "safe fixture behavior",
+                    "code_evidence": "safe fixture behavior",
+                },
+            },
         },
     )
     (sample_dir / "vulnerable.js").write_text("function safe() {\n  return userInput.replace(rx, 'x');\n}\n", encoding="utf-8")

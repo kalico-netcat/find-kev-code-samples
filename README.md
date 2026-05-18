@@ -88,7 +88,7 @@ bin/kev-collector samples import agent-output/snippets/CVE-YYYY-NNNN/sample.json
 
 ## Human Review
 
-Human review happens after `samples import`, when `samples/<CVE>/<sample_id>/review.md`, `vulnerable.*`, and `fixed.*` exist. List review cards with:
+Human review happens after `samples import`, when `samples/<CVE>/<sample_id>/review.md`, `vulnerable.*`, `fixed.*`, and metadata `expected_responses` exist. `expected_responses` records the downstream benchmark judge answers for each snippet, including vulnerability label, vulnerability type, expected behavior, and code evidence. List review cards with:
 
 ```sh
 bin/kev-collector samples review-list
@@ -112,7 +112,7 @@ Accepted positive samples can also produce derived negative benchmark samples:
 bin/kev-collector samples negatives generate
 ```
 
-This command scans accepted positive samples, copies the accepted `fixed.*` snippet into a review-ready `negative.*` sample, and records derivation metadata such as `sample_kind`, `derived_from_sample_id`, and `negative_strategy`. Generated negatives start in `status: needs_review` and show up in `samples review-list` with `sample_kind: negative`.
+This command scans accepted positive samples, copies the accepted `fixed.*` snippet into a review-ready `negative.*` sample, and records derivation metadata such as `sample_kind`, `derived_from_sample_id`, `negative_strategy`, and negative `expected_responses`. Generated negatives start in `status: needs_review` and show up in `samples review-list` with `sample_kind: negative`.
 
 ## Sample Anonymization
 
@@ -122,4 +122,4 @@ Create deterministic benchmark-facing copies without changing canonical `samples
 bin/kev-collector samples anonymize --status accepted --output anonymized-samples
 ```
 
-The anonymizer writes one directory per anonymized sample with public-safe metadata, transformed snippet files, a transform summary, and a mapping file with redaction counts. It uses balanced provenance redaction: ordinary identifiers, comments, strings, formatting, and code shape are preserved, while CVE IDs, URLs, commit hashes, advisory IDs, repo/project names, and exact source path fragments are replaced with stable placeholders. Every anonymized sample directory contains both `vulnerable.*` and `fixed.*`. Accepted positive samples preserve their vulnerable/fixed pair; accepted negative samples also export both files, with the anonymized `vulnerable.*` and `fixed.*` copies intentionally matching so the sample still has a fixed reference. Use `--dry-run` to preview work and `--force` to regenerate existing anonymized outputs.
+The anonymizer writes one directory per anonymized sample with public-safe metadata, transformed snippet files, expected benchmark responses, a transform summary, and a mapping file with redaction counts. It uses balanced provenance redaction: ordinary identifiers, comments, strings, formatting, and code shape are preserved, while CVE IDs, URLs, commit hashes, advisory IDs, repo/project names, and exact source path fragments are replaced with stable placeholders. Every anonymized sample directory contains both `vulnerable.*` and `fixed.*`. Accepted positive samples preserve their vulnerable/fixed pair; accepted negative samples also export both files, with the anonymized `vulnerable.*` and `fixed.*` copies intentionally matching so the sample still has a fixed reference. Use `--dry-run` to preview work and `--force` to regenerate existing anonymized outputs.

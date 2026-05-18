@@ -16,6 +16,9 @@ class SampleValidationTests(unittest.TestCase):
             self.assertTrue((sample_dir / "evidence.md").exists())
             self.assertTrue((sample_dir / "vulnerable.js").exists())
             self.assertTrue((sample_dir / "fixed.js").exists())
+            metadata = read_json(sample_dir / "metadata.json")
+            self.assertEqual(metadata["expected_responses"]["vulnerable"]["file"], "vulnerable.js")
+            self.assertEqual(metadata["expected_responses"]["fixed"]["file"], "fixed.js")
             self.assertEqual(validate_sample_dir(sample_dir), [])
 
 
@@ -33,6 +36,21 @@ class SampleValidationTests(unittest.TestCase):
             self.assertTrue(any("source_urls" in error for error in errors))
             self.assertTrue(any("license metadata" in error for error in errors))
             self.assertTrue(any("snippet is empty" in error for error in errors))
+            self.assertTrue(any("expected_responses.vulnerable empty fields" in error for error in errors))
+
+    def test_accepted_sample_requires_expected_responses(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            sample_dir = create_sample(tmp_path / "samples", "CVE-2020-11023", "jquery-xss", "javascript")
+            metadata_path = sample_dir / "metadata.json"
+            metadata = read_json(metadata_path)
+            metadata["status"] = "accepted"
+            metadata.pop("expected_responses")
+            write_json(metadata_path, metadata)
+
+            errors = validate_sample_dir(sample_dir)
+
+            self.assertTrue(any("expected_responses" in error for error in errors))
 
     def test_explicit_positive_sample_kind_is_valid(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

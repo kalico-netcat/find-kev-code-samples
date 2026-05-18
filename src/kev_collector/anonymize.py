@@ -145,6 +145,7 @@ def anonymize_sample_dir(
             "vulnerable": f"vulnerable.{sample.extension}",
             "fixed": f"fixed.{sample.extension}",
         },
+        "expected_responses": public_expected_responses(sample),
     }
     write_json(destination / "metadata.json", public_metadata)
     (destination / f"vulnerable.{sample.extension}").write_text(transform["vulnerable_code"], encoding="utf-8")
@@ -435,6 +436,64 @@ This is a generated anonymized copy of a canonical KEV sample. Public provenance
 - Provenance redactions: {result['provenance_redactions']}
 - Redaction counts: {json.dumps(result['redaction_counts'], sort_keys=True)}
 """
+
+
+def public_expected_responses(sample: AnonymizedSample) -> dict[str, Any]:
+    expected = sample.metadata.get("expected_responses") if isinstance(sample.metadata.get("expected_responses"), dict) else {}
+    if sample.source_sample_kind == "negative":
+        source = expected.get("negative") if isinstance(expected.get("negative"), dict) else {}
+        response = sanitize_expected_response(source, sample.metadata)
+        response.update(
+            {
+                "file": f"vulnerable.{sample.extension}",
+                "paired_file": f"fixed.{sample.extension}",
+                "is_vulnerable": False,
+                "label": "non_vulnerable",
+            }
+        )
+        return {"vulnerable": response, "fixed": dict(response, file=f"fixed.{sample.extension}", paired_file=f"vulnerable.{sample.extension}")}
+
+    vulnerable = sanitize_expected_response(
+        expected.get("vulnerable") if isinstance(expected.get("vulnerable"), dict) else {},
+        sample.metadata,
+    )
+    fixed = sanitize_expected_response(
+        expected.get("fixed") if isinstance(expected.get("fixed"), dict) else {},
+        sample.metadata,
+    )
+    vulnerable.update(
+        {
+            "file": f"vulnerable.{sample.extension}",
+            "is_vulnerable": True,
+            "label": "vulnerable",
+        }
+    )
+    fixed.update(
+        {
+            "file": f"fixed.{sample.extension}",
+            "is_vulnerable": False,
+            "label": "fixed",
+        }
+    )
+    return {"vulnerable": vulnerable, "fixed": fixed}
+
+
+def sanitize_expected_response(response: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "vulnerability_type",
+        "expected_behavior",
+        "code_evidence",
+        "fix_evidence",
+        "negative_strategy",
+    }
+    rules = provenance_redaction_rules(metadata)
+    sanitized: dict[str, Any] = {}
+    for key in sorted(allowed):
+        if key not in response:
+            continue
+        value = str(response.get(key) or "")
+        sanitized[key] = redact_provenance(value, rules)[0]
+    return sanitized
 
 
 def validate_anonymized_output(root: Path) -> list[str]:

@@ -172,6 +172,7 @@ def import_snippets(root: Path, snippet_paths: list[Path], force: bool = False) 
                 "preferred_source": snippet.get("evidence_level", ""),
                 "extraction_notes": snippet.get("rationale", ""),
             },
+            "expected_responses": positive_expected_responses(snippet, extension),
         }
         write_json(sample_dir / "metadata.json", metadata)
         (sample_dir / f"vulnerable.{extension}").write_text(snippet["vulnerable_code"], encoding="utf-8")
@@ -314,6 +315,7 @@ def write_negative_sample(root: Path, source_dir: Path, metadata: dict[str, Any]
         "derived_from_sample_id": source_sample_id,
         "derived_from_sample_key": source_sample_key,
         "negative_strategy": NEGATIVE_STRATEGY,
+        "expected_responses": negative_expected_responses(metadata, extension),
     }
     write_json(metadata_path, negative_metadata)
     (negative_dir / f"negative.{extension}").write_text(negative_code, encoding="utf-8")
@@ -557,6 +559,10 @@ def render_snippet_prompt(
         "vulnerable_code": "...",
         "fixed_code": "...",
         "rationale": "Why this is the smallest snippet that still contains enough context to identify the bug.",
+        "vulnerability_type": "Concrete bug class visible in the snippet, such as stored XSS, path traversal, auth bypass, or buffer overflow.",
+        "vulnerable_behavior": "What a correct judge should identify as vulnerable in the vulnerable snippet.",
+        "fixed_behavior": "What a correct judge should identify as remediated or safe in the fixed snippet.",
+        "code_evidence": "The specific source, guard, sink, parser, permission check, bounds check, lifetime handling, or equivalent code evidence.",
         "uncertainty": "Any ambiguity, missing context, or review concern.",
         "review_notes": "Notes for human reviewer.",
     }
@@ -595,6 +601,7 @@ Use `vulnerable_path`, `fixed_path`, `patch_path`, and `candidate_hunks_path` wh
 - If the vulnerability still cannot be determined from code in the prepared bundle, say so in `uncertainty` and `review_notes` instead of overclaiming.
 - Do not include unrelated refactors, test-only changes, or broad whole-file excerpts unless unavoidable.
 - Use the prepared vulnerable/fixed files as the source of truth when available.
+- Fill `vulnerability_type`, `vulnerable_behavior`, `fixed_behavior`, and `code_evidence` with concise expected-answer data for downstream benchmark judging.
 
 ## Finding
 
@@ -618,6 +625,51 @@ def validate_snippet_json(snippet: dict[str, Any]) -> None:
     missing = sorted(field for field in required if not snippet.get(field))
     if missing:
         raise ValueError(f"snippet JSON missing fields: {', '.join(missing)}")
+
+
+def positive_expected_responses(snippet: dict[str, Any], extension: str) -> dict[str, Any]:
+    vulnerability_type = str(snippet.get("vulnerability_type") or "").strip()
+    code_evidence = str(snippet.get("code_evidence") or snippet.get("rationale") or "").strip()
+    vulnerable_behavior = str(snippet.get("vulnerable_behavior") or code_evidence).strip()
+    fixed_behavior = str(snippet.get("fixed_behavior") or snippet.get("rationale") or "").strip()
+    return {
+        "vulnerable": {
+            "file": f"vulnerable.{extension}",
+            "is_vulnerable": True,
+            "label": "vulnerable",
+            "vulnerability_type": vulnerability_type,
+            "expected_behavior": vulnerable_behavior,
+            "code_evidence": code_evidence,
+        },
+        "fixed": {
+            "file": f"fixed.{extension}",
+            "is_vulnerable": False,
+            "label": "fixed",
+            "vulnerability_type": vulnerability_type,
+            "expected_behavior": fixed_behavior,
+            "code_evidence": fixed_behavior,
+        },
+    }
+
+
+def negative_expected_responses(metadata: dict[str, Any], extension: str) -> dict[str, Any]:
+    source_expected = metadata.get("expected_responses") if isinstance(metadata.get("expected_responses"), dict) else {}
+    source_vulnerable = source_expected.get("vulnerable") if isinstance(source_expected.get("vulnerable"), dict) else {}
+    source_fixed = source_expected.get("fixed") if isinstance(source_expected.get("fixed"), dict) else {}
+    vulnerability_type = str(source_vulnerable.get("vulnerability_type") or source_fixed.get("vulnerability_type") or "").strip()
+    expected_behavior = str(source_fixed.get("expected_behavior") or source_fixed.get("code_evidence") or "").strip()
+    return {
+        "negative": {
+            "file": f"negative.{extension}",
+            "is_vulnerable": False,
+            "label": "non_vulnerable",
+            "vulnerability_type": vulnerability_type,
+            "expected_behavior": expected_behavior,
+            "code_evidence": expected_behavior,
+            "derived_from": str(metadata.get("sample_id") or ""),
+            "negative_strategy": NEGATIVE_STRATEGY,
+        },
+    }
 
 
 def render_evidence(snippet: dict[str, Any]) -> str:

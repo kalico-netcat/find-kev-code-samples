@@ -46,6 +46,24 @@ def create_sample(root: Path, cve_id: str, sample_id: str, language: str = "txt"
                     "preferred_source": "",
                     "extraction_notes": "",
                 },
+                "expected_responses": {
+                    "vulnerable": {
+                        "file": f"vulnerable.{extension}",
+                        "is_vulnerable": True,
+                        "label": "vulnerable",
+                        "vulnerability_type": "",
+                        "code_evidence": "",
+                        "fix_evidence": "",
+                    },
+                    "fixed": {
+                        "file": f"fixed.{extension}",
+                        "is_vulnerable": False,
+                        "label": "fixed",
+                        "vulnerability_type": "",
+                        "code_evidence": "",
+                        "fix_evidence": "",
+                    },
+                },
             },
         )
 
@@ -124,6 +142,7 @@ def validate_sample_dir(sample_dir: Path) -> list[str]:
 
         if status == "accepted":
             errors.extend(validate_accepted_positive_sample(sample_dir, metadata, vulnerable_files, fixed_files, evidence_path))
+            errors.extend(validate_expected_responses(metadata_path, metadata, {"vulnerable", "fixed"}))
     else:
         negative_files = sorted(sample_dir.glob("negative.*"))
         if not negative_files:
@@ -131,6 +150,7 @@ def validate_sample_dir(sample_dir: Path) -> list[str]:
         errors.extend(validate_negative_sample_metadata(metadata_path, metadata))
         if status == "accepted":
             errors.extend(validate_accepted_negative_sample(metadata_path, metadata, negative_files, evidence_path))
+            errors.extend(validate_expected_responses(metadata_path, metadata, {"negative"}))
 
     return errors
 
@@ -199,6 +219,34 @@ def validate_accepted_negative_sample(
     if not evidence_path.exists() or not evidence_path.read_text(encoding="utf-8").strip():
         errors.append(f"{evidence_path}: accepted sample missing evidence notes")
 
+    return errors
+
+
+def validate_expected_responses(metadata_path: Path, metadata: dict[str, Any], expected_keys: set[str]) -> list[str]:
+    errors: list[str] = []
+    responses = metadata.get("expected_responses")
+    if not isinstance(responses, dict):
+        return [f"{metadata_path}: accepted sample missing expected_responses"]
+
+    missing_keys = sorted(key for key in expected_keys if not isinstance(responses.get(key), dict))
+    if missing_keys:
+        errors.append(f"{metadata_path}: expected_responses missing entries: {', '.join(missing_keys)}")
+        return errors
+
+    for key in sorted(expected_keys):
+        response = responses[key]
+        required = {"file", "is_vulnerable", "label", "vulnerability_type", "code_evidence"}
+        missing_fields = sorted(field for field in required if field not in response)
+        if missing_fields:
+            errors.append(f"{metadata_path}: expected_responses.{key} missing fields: {', '.join(missing_fields)}")
+            continue
+        empty_fields = sorted(
+            field
+            for field in ("vulnerability_type", "code_evidence")
+            if not str(response.get(field) or "").strip()
+        )
+        if empty_fields:
+            errors.append(f"{metadata_path}: expected_responses.{key} empty fields: {', '.join(empty_fields)}")
     return errors
 
 
